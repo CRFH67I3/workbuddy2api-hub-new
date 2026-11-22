@@ -1,3 +1,7 @@
+## Unreleased
+
+- **免费模型不再被低余额保留线拦截**：免费名单原先只认目录 `credits: x0.00`，`hy4flash-free` / `hy4free` 这类上游按命名标为免费、但不在定价目录里的模型因此不在名单中；账号余额跌破 `reserve_credits` 后，连免费模型一起 park，网关对所有模型回 503。现在 `model_id_is_free()` 同时接受 `credits: x0.00` 与 `free` 后缀，`free_models_by_realm()` 的三个来源统一走该判定。付费模型的保留线保护不变。
+
 ## v2.2.1
 
 - **修复 Docker 镜像缺少 `wb_webgateway/`**：Dockerfile 只复制了 `wb_*.py`，网页工具网关在容器里会因 `No module named 'wb_webgateway'` 静默降级，`/health` 仍返回 200。镜像现在显式复制整个子包，并新增 Dockerfile 回归断言。

@@ -4224,8 +4224,23 @@ def credits_is_free(value):
     return str(value or "").strip().lower() in ("x0.00", "x0", "0", "0.00")
 
 
+def model_id_is_free(mid, item=None):
+    """True when this model costs nothing.
+
+    The catalogue's ``credits`` field is the primary signal. A ``free`` suffix
+    is the second: the upstream names its zero-cost tiers that way
+    (``hy4flash-free``, ``hy4free``), and those ids are not always present in
+    the priced catalogue table, so relying on ``credits`` alone left them out
+    of the free set. The low-credit reserve then refused them - a free model
+    blocked because a *paid* balance was low.
+    """
+    if credits_is_free((item or {}).get("credits")):
+        return True
+    return str(mid or "").strip().lower().endswith("free")
+
+
 def free_models_by_realm():
-    """realm -> set of model ids the catalogue marks free ("x0.00").
+    """realm -> set of model ids that cost nothing ("x0.00" or ``-free``).
 
     Built from the bundled snapshot, the desktop cache file, and the live
     ``_models_cache`` entry when it exists - all local reads, no network - and
@@ -4245,18 +4260,18 @@ def free_models_by_realm():
             if not isinstance(item, dict):
                 continue
             mid = str(item.get("id") or "").strip()
-            if mid and credits_is_free(item.get("credits")):
+            if mid and model_id_is_free(mid, item):
                 free.add(mid)
         cached = read_cached_remote_catalog(realm)
         if cached:
             for mid, item in (cached[1] or {}).items():
-                if isinstance(item, dict) and credits_is_free(item.get("credits")):
+                if model_id_is_free(mid, item if isinstance(item, dict) else None):
                     free.add(str(mid))
         # The live /v3/config result can contain a newly free model that neither
         # the bundled snapshot nor the desktop cache file knows yet (hy4free).
         live = (_models_cache.get(realm) or {}).get("data") or []
         for mid, item in live:
-            if isinstance(item, dict) and credits_is_free(item.get("credits")):
+            if model_id_is_free(mid, item if isinstance(item, dict) else None):
                 free.add(str(mid))
         out[realm] = free
     _free_models_cache.update({"at": now, "data": out})

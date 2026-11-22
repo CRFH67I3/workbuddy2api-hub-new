@@ -1745,8 +1745,19 @@ class Account(object):
             return False
 
     def model_is_free(self, model):
-        """True when the realm catalogue marks `model` as a free one."""
-        return bool(model) and model in (self.free_models or ())
+        """True when `model` costs nothing.
+
+        The realm catalogue's free set is the primary signal. A ``free`` id
+        suffix is the second: upstream names its zero-cost tiers that way
+        (``hy4flash-free``, ``hy4free``) and those ids are not always present
+        in the priced catalogue, so the set lookup alone let the low-credit
+        reserve park an account for a free model - a paid balance blocking a
+        free request.
+        """
+        if not model:
+            return False
+        return (model in (self.free_models or ())
+                or str(model).strip().lower().endswith("free"))
 
     def credit_limit_reached(self):
         """True when today's counted spend reached the daily credit limit.
