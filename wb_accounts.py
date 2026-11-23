@@ -4489,7 +4489,11 @@ class CreditsRefresher(threading.Thread):
             if self._stop_event.is_set():
                 break
             if index and self.warm_gap > 0:
-                time.sleep(self.warm_gap)
+                # 可中断等待：停止信号在间隔里到达时不要再发下一个请求。
+                if self._stop_event.wait(timeout=self.warm_gap):
+                    break
+            if self._stop_event.is_set():
+                break
             if self._parked.get(account.uid, 0) > stamp:
                 continue
             self._refresh_account(account, now=now)
@@ -4523,12 +4527,14 @@ class CreditsRefresher(threading.Thread):
                 break
             self._wake.clear()
             try:
-                # 首次 tick 刷全部账号；之后回到「每次一个最陈旧的」节奏。
-                # warm_sweep 只在本线程里跑，服务不等它完成。
-                if not warmed:
+                # 首次 tick 刷全部账号；关闭预热时保留旧的首轮单账号刷新，
+                # 否则关闭预热会连原来的第一次刷新都跳过。
+                # 整个过程只在本线程里跑，服务不等它完成。
+                if not warmed and self.warm_start:
                     warmed = True
                     self.warm_sweep()
                 else:
+                    warmed = True
                     self.refresh_once()
             except Exception as exc:
                 self.last_error = str(exc)

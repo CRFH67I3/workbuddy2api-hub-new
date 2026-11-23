@@ -594,6 +594,79 @@ class CreditsRefresherTests(unittest.TestCase):
         self.assertEqual(refresher.warm_sweep(), 0)
         self.assertEqual(seen, [])
 
+    def test_run_first_tick_uses_warm_sweep_when_enabled(self):
+        """run 层：预热开启时首轮走 warm_sweep，后续回到 refresh_once。"""
+        calls = []
+        account = self._account("a", None, fetch=lambda: {"ok": True})
+        _, pool = self._pool_with([account])
+        refresher = wb_accounts.CreditsRefresher(pool, interval_seconds=60.0)
+        refresher._wake = type("FakeWake", (), {
+            "wait": lambda _self, timeout=None: None,
+            "set": lambda _self: None,
+            "clear": lambda _self: None,
+        })()
+        ticks = []
+
+        def fake_refresh(now=None):
+            ticks.append("once")
+            if len(ticks) >= 2:
+                refresher._stop_event.set()
+            return None
+
+        def fake_warm(now=None):
+            ticks.append("sweep")
+            return 1
+
+        refresher.refresh_once = fake_refresh
+        refresher.warm_sweep = fake_warm
+        refresher.start()
+        refresher.join(timeout=3)
+        self.assertEqual(ticks[:2], ["sweep", "once"])
+
+    def test_run_first_tick_keeps_legacy_refresh_when_warm_disabled(self):
+        """run 层：关闭预热时首轮必须仍执行原来的单账号刷新。"""
+        ticks = []
+        account = self._account("a", None, fetch=lambda: {"ok": True})
+        _, pool = self._pool_with([account])
+        refresher = wb_accounts.CreditsRefresher(
+            pool, interval_seconds=60.0, warm_start=False)
+        refresher._wake = type("FakeWake", (), {
+            "wait": lambda _self, timeout=None: None,
+            "set": lambda _self: None,
+            "clear": lambda _self: None,
+        })()
+
+        def fake_refresh(now=None):
+            ticks.append("once")
+            refresher._stop_event.set()
+            return None
+
+        refresher.refresh_once = fake_refresh
+        refresher.warm_sweep = lambda now=None: ticks.append("sweep")
+        refresher.start()
+        refresher.join(timeout=3)
+        self.assertEqual(ticks, ["once"])
+
+    def test_warm_sweep_wake_breaks_before_the_next_account(self):
+        """停止信号到达后不能再看下一个账号。"""
+        seen = []
+        accounts = [
+            self._account(uid, None, fetch=lambda uid=uid: seen.append(uid) or {"ok": True})
+            for uid in ("first", "second", "third")
+        ]
+        _, pool = self._pool_with(accounts)
+        refresher = wb_accounts.CreditsRefresher(pool, warm_gap=0.1)
+        original_refresh = refresher._refresh_account
+
+        def stop_after_first(account, now=None):
+            uid = original_refresh(account, now=now)
+            refresher._stop_event.set()
+            return uid
+
+        refresher._refresh_account = stop_after_first
+        refresher.warm_sweep()
+        self.assertEqual(seen, ["first"])
+
     def test_start_never_blocks_on_a_slow_upstream(self):
         def slow():
             time.sleep(0.4)
