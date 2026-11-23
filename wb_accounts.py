@@ -49,6 +49,9 @@ PROFILE_PATH = "/console/account"
 WEB_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0")
 DAILY_CHAT_MODEL = "deepseek-v4.1-flash"
+#: 上游以 ``free`` 命名、但不在定价目录里的零成本模型。只有这份经过确认的
+#: 名单才允许账号层在没有目录价格时绕过保留线；任意 ``*free`` 名称不行。
+CONFIRMED_FREE_MODEL_IDS = frozenset({"hy4flash-free", "hy4free"})
 DAILY_CHAT_WEB_PROMPT = "Hi"
 #: 网页通道一轮最多等多久（秒）。实测一次「Hi」十几秒就跑完，留足余量。
 #: 没配 settings 的账号（如单测里手工构造的）用它兜底。
@@ -1745,8 +1748,19 @@ class Account(object):
             return False
 
     def model_is_free(self, model):
-        """True when the realm catalogue marks `model` as a free one."""
-        return bool(model) and model in (self.free_models or ())
+        """True when `model` costs nothing.
+
+        The realm catalogue's free set is the primary signal. A confirmed
+        allowlist covers upstream zero-cost tiers that are named ``free`` but
+        absent from the priced catalogue (``hy4flash-free``, ``hy4free``).
+        Arbitrary ``*free`` ids are NOT trusted here: a model whose real price
+        is nonzero must never bypass the operator's low-credit guard just
+        because of its name.
+        """
+        if not model:
+            return False
+        return (model in (self.free_models or ())
+                or str(model).strip().lower() in CONFIRMED_FREE_MODEL_IDS)
 
     def credit_limit_reached(self):
         """True when today's counted spend reached the daily credit limit.
