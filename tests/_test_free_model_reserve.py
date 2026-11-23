@@ -84,6 +84,14 @@ class FreeModelsByRealmTests(unittest.TestCase):
         self.assertIn("hy3", free)
         self.assertNotIn("deepseek-v4.1-flash", free)
 
+    def test_confirmed_free_ids_enter_free_set_even_when_absent_from_catalogue(self):
+        P._models_cache["intl"] = {"at": 0.0, "data": []}
+        P._models_cache["cn"] = {"at": 0.0, "data": []}
+        view = P.free_models_by_realm()
+        for realm in ("intl", "cn"):
+            self.assertIn("hy4flash-free", view[realm])
+            self.assertIn("hy4free", view[realm])
+
     def test_paid_price_in_cached_catalogue_beats_a_free_name(self):
         P._models_cache["cn"] = {"at": 0.0, "data": []}
         P.read_cached_remote_catalog = lambda realm: (
@@ -94,37 +102,110 @@ class FreeModelsByRealmTests(unittest.TestCase):
         self.assertNotIn("hy4flash-free", free)
         self.assertNotIn("glm-5.3", free)
 
+    def test_higher_layer_paid_price_overrides_static_free_and_confirmed_ids(self):
+        # cached 把静态免费 hy3 标价、且忽略大小写移除 hy4flash-free；live 即使只给空价格也不能误加回。
+        P.read_cached_remote_catalog = lambda realm: (
+            ["Hy4Flash-Free", "hy3"],
+            {"Hy4Flash-Free": {"credits": "x0.30"}, "hy3": {"credits": "x0.25"}},
+        ) if realm == "intl" else None
+        P._models_cache["intl"] = {"at": 0.0, "data": [
+            ("hy4flash-free", {}),
+            ("hy4free", {"credits": "x0.50"}),
+            ("made-up-free", {}),
+        ]}
+        free = P.free_models_by_realm()["intl"]
+        self.assertNotIn("hy4flash-free", free)
+        self.assertNotIn("hy3", free)
+        self.assertNotIn("hy4free", free)
+        self.assertNotIn("made-up-free", free)
+
+    def test_live_zero_price_restores_model_even_if_cached_marked_paid(self):
+        P.read_cached_remote_catalog = lambda realm: (
+            ["hy4flash-free"],
+            {"hy4flash-free": {"credits": "x0.30"}},
+        ) if realm == "intl" else None
+        P._models_cache["intl"] = {"at": 0.0, "data": [
+            ("hy4flash-free", {"credits": "x0.00"}),
+        ]}
+        free = P.free_models_by_realm()["intl"]
+        self.assertIn("hy4flash-free", free)
+
 
 class ReserveExemptsFreeModelTests(unittest.TestCase):
-    def make_account(self, remain, free_models):
-        account = wb_accounts.Account.__new__(wb_accounts.Account)
-        account.reserve_credits = 30
-        account.credits = {"remain": remain, "used": 1}
-        account.free_models = frozenset(free_models)
+    def setUp(self):
+        P._free_models_cache.update({"at": 0.0, "data": None})
+        self._orig_live = (dict(P._models_cache), dict(P._catalog_meta))
+        self._orig_cached = P.read_cached_remote_catalog
+        P.read_cached_remote_catalog = lambda realm: None
+        P._models_cache["intl"] = {"at": 0.0, "data": []}
+        P._models_cache["cn"] = {"at": 0.0, "data": []}
+
+    def tearDown(self):
+        P._models_cache.clear()
+        P._models_cache.update(self._orig_live[0])
+        P._catalog_meta.clear()
+        P._catalog_meta.update(self._orig_live[1])
+        P.read_cached_remote_catalog = self._orig_cached
+        P._free_models_cache.update({"at": 0.0, "data": None})
+
+    def make_account(self, remain, free_models=None, realm="intl"):
+        account = wb_accounts.Account({
+            "uid": "uid-free-reserve-test",
+            "accessToken": "tok-test",
+            "realm": realm,
+            "credits": {"remain": remain, "used": 1, "size": 100},
+        })
+        if free_models is None:
+            with tempfile.TemporaryDirectory(prefix="wb-free-pool-") as directory:
+                pool = wb_accounts.AccountPool(directory, log=lambda _m: None)
+                pool.accounts = [account]
+                pool.apply_reserve_credits(30, P.free_models_by_realm())
+        else:
+            account.reserve_credits = 30
+            account.free_models = frozenset(free_models)
         return account
 
     def test_free_model_serves_below_reserve(self):
         account = self.make_account(10, ["hy4flash-free"])
         self.assertFalse(account.reserve_blocked("hy4flash-free"))
+        self.assertFalse(account.reserve_blocked("Hy4Flash-FREE"))
 
     def test_confirmed_free_id_serves_without_catalogue_entry(self):
-        # hy4flash-free 不在定价目录里：free_models 为空也必须放行
-        account = self.make_account(10, [])
+        # hy4flash-free / hy4free 不在定价目录里：经 free_models_by_realm + apply_reserve_credits 放行
+        account = self.make_account(10)
         self.assertFalse(account.reserve_blocked("hy4flash-free"))
+        self.assertFalse(account.reserve_blocked("Hy4Flash-FREE"))
         self.assertFalse(account.reserve_blocked("hy4free"))
 
+    def test_catalogue_paid_price_re_enables_reserve_even_for_confirmed_ids(self):
+        P._models_cache["intl"] = {"at": 0.0, "data": [
+            ("Hy4Flash-Free", {"credits": "x0.30"}),
+            ("hy3", {"credits": "x0.25"}),
+        ]}
+        account = self.make_account(10)
+        self.assertTrue(account.reserve_blocked("hy4flash-free"))
+        self.assertTrue(account.reserve_blocked("Hy4Flash-FREE"))
+        self.assertTrue(account.reserve_blocked("hy3"))
+        self.assertFalse(account.reserve_blocked("hy4free"))
+
+    def test_empty_account_free_models_stays_fail_closed(self):
+        # 账号层不绕过 free_models：目录未注入时维持 fail-closed
+        account = self.make_account(10, [])
+        self.assertTrue(account.reserve_blocked("hy4flash-free"))
+        self.assertTrue(account.reserve_blocked("hy4free"))
+
     def test_paid_model_still_blocked_below_reserve(self):
-        account = self.make_account(10, ["hy4flash-free"])
+        account = self.make_account(10)
         self.assertTrue(account.reserve_blocked("deepseek-v4.1-flash"))
 
     def test_unconfirmed_free_name_still_blocked_below_reserve(self):
         # 任意 *free 名称不能绕过保留线
-        account = self.make_account(10, [])
+        account = self.make_account(10)
         self.assertTrue(account.reserve_blocked("made-up-free"))
         self.assertTrue(account.reserve_blocked("paid-model-free"))
 
     def test_reserve_off_never_blocks(self):
-        account = self.make_account(1, [])
+        account = self.make_account(1)
         account.reserve_credits = 0
         self.assertFalse(account.reserve_blocked("deepseek-v4.1-flash"))
 

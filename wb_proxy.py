@@ -4255,13 +4255,15 @@ def model_id_is_free(mid, item=None):
 
 
 def free_models_by_realm():
-    """realm -> set of model ids that cost nothing ("x0.00" or ``-free``).
+    """realm -> set of model ids that cost nothing ("x0.00" or confirmed free).
 
-    Built from the bundled snapshot, the desktop cache file, and the live
-    ``_models_cache`` entry when it exists - all local reads, no network - and
-    cached for a minute so the request path pays nothing. The daily credit
-    guard uses it to tell paid models from free ones, per realm: the same id
-    can be free on one exit and paid on the other.
+    Built in precedence order: ``CONFIRMED_FREE_MODEL_IDS`` -> bundled static
+    snapshot -> desktop cache file -> live ``_models_cache`` - all local
+    reads, no network - and cached for a minute so the request path pays
+    nothing. An explicit non-zero price in a higher layer removes the model
+    from the free set even if a lower layer or the confirmed list included it.
+    The daily credit guard uses it to tell paid models from free ones, per
+    realm: the same id can be free on one exit and paid on the other.
     """
     now = time.time()
     data = _free_models_cache.get("data")
@@ -4270,25 +4272,33 @@ def free_models_by_realm():
     out = {}
     for realm, source in (("intl", getattr(wb_catalog, "STATIC_INTL_MODELS", [])),
                           ("cn", getattr(wb_catalog, "STATIC_CN_MODELS", []))):
-        free = set()
+        by_lower = {mid.lower(): mid
+                    for mid in wb_accounts.CONFIRMED_FREE_MODEL_IDS}
+
+        def _apply(mid, item):
+            key = str(mid or "").strip()
+            low = key.lower()
+            if not low:
+                return
+            credits = item.get("credits") if isinstance(item, dict) else None
+            if credits_is_free(credits):
+                by_lower[low] = key
+            elif str(credits or "").strip():
+                by_lower.pop(low, None)
+
         for item in source or []:
-            if not isinstance(item, dict):
-                continue
-            mid = str(item.get("id") or "").strip()
-            if mid and model_id_is_free(mid, item):
-                free.add(mid)
+            if isinstance(item, dict):
+                _apply(item.get("id"), item)
         cached = read_cached_remote_catalog(realm)
         if cached:
             for mid, item in (cached[1] or {}).items():
-                if model_id_is_free(mid, item if isinstance(item, dict) else None):
-                    free.add(str(mid))
+                _apply(mid, item)
         # The live /v3/config result can contain a newly free model that neither
         # the bundled snapshot nor the desktop cache file knows yet (hy4free).
         live = (_models_cache.get(realm) or {}).get("data") or []
         for mid, item in live:
-            if model_id_is_free(mid, item if isinstance(item, dict) else None):
-                free.add(str(mid))
-        out[realm] = free
+            _apply(mid, item)
+        out[realm] = set(by_lower.values())
     _free_models_cache.update({"at": now, "data": out})
     return out
 
@@ -12904,7 +12914,7 @@ def runtime_settings_view():
         "accounts_dir": ACCOUNTS_DIR,
         "usage_dir": USAGE_DIR,
         "settings_file": wb_settings.settings_path(ACCOUNTS_DIR),
-        "version": "2.2.1",
+        "version": "2.2.2",
     }
 def current_account():
     """Account used for display purposes (health / usage summaries)."""
@@ -22861,7 +22871,7 @@ class Handler(BaseHTTPRequestHandler):
             super().finish()
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
             pass
-    server_version = "wb-proxy/2.2.1"
+    server_version = "wb-proxy/2.2.2"
     def log_message(self, fmt, *args):
         # 静默过滤前端看板高频定时心跳的正常 200 GET 请求（/logs、/usage、/accounts 轮询等）
         # 避免自增死循环刷屏与日志污染。遇 4xx/5xx 异常或所有非 GET 业务操作依然如实记录。

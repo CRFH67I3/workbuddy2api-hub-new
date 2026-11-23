@@ -49,8 +49,10 @@ PROFILE_PATH = "/console/account"
 WEB_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0")
 DAILY_CHAT_MODEL = "deepseek-v4.1-flash"
-#: 上游以 ``free`` 命名、但不在定价目录里的零成本模型。只有这份经过确认的
-#: 名单才允许账号层在没有目录价格时绕过保留线；任意 ``*free`` 名称不行。
+#: 上游以 ``free`` 命名、但可能缺席定价目录的已确认零成本模型基线；
+#: 由 ``wb_proxy.free_models_by_realm()`` 在目录未标非零价格时纳入免费名单，
+#: 任意 ``*free`` 名称不行。账号层本身只认 ``self.free_models``，保证目录
+#: 显式标价收费时能按区域回收免费豁免。
 CONFIRMED_FREE_MODEL_IDS = frozenset({"hy4flash-free", "hy4free"})
 DAILY_CHAT_WEB_PROMPT = "Hi"
 #: 网页通道一轮最多等多久（秒）。实测一次「Hi」十几秒就跑完，留足余量。
@@ -1748,19 +1750,16 @@ class Account(object):
             return False
 
     def model_is_free(self, model):
-        """True when `model` costs nothing.
-
-        The realm catalogue's free set is the primary signal. A confirmed
-        allowlist covers upstream zero-cost tiers that are named ``free`` but
-        absent from the priced catalogue (``hy4flash-free``, ``hy4free``).
-        Arbitrary ``*free`` ids are NOT trusted here: a model whose real price
-        is nonzero must never bypass the operator's low-credit guard just
-        because of its name.
-        """
-        if not model:
+        """True when the realm catalogue marks `model` as a free one."""
+        if not model or not self.free_models:
             return False
-        return (model in (self.free_models or ())
-                or str(model).strip().lower() in CONFIRMED_FREE_MODEL_IDS)
+        if model in self.free_models:
+            return True
+        low = str(model).strip().lower()
+        if not low:
+            return False
+        return any(str(entry).strip().lower() == low
+                   for entry in self.free_models)
 
     def credit_limit_reached(self):
         """True when today's counted spend reached the daily credit limit.
