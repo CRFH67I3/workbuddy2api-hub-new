@@ -555,6 +555,64 @@ class CreditsRefresherTests(unittest.TestCase):
         refresher = wb_accounts.CreditsRefresher(pool)
         self.assertIsNone(refresher.stalest_account(refresher.ttl_seconds()))
 
+    # -- 启动预热：重启后第一轮刷全部账号 -------------------------------
+
+    def test_warm_sweep_refreshes_every_account(self):
+        """重启后不能只刷一个账号。
+
+        余额是调度与低余额保留线的输入。磁盘快照可能已是几小时前的数字，
+        旧节奏每 tick 只修一个账号，其余账号继续被放行；7 个账号一轮要
+        3.5 小时，足够把余额打穿。
+        """
+        seen = []
+        accounts = [self._account(uid, None,
+                                  fetch=lambda uid=uid: seen.append(uid) or {"ok": True})
+                    for uid in ("warm-a", "warm-b", "warm-c")]
+        _, pool = self._pool_with(accounts)
+        refresher = wb_accounts.CreditsRefresher(pool, warm_gap=0)
+        self.assertEqual(refresher.warm_sweep(), 3)
+        self.assertEqual(sorted(seen), ["warm-a", "warm-b", "warm-c"])
+
+    def test_warm_sweep_skips_disabled_and_parked_accounts(self):
+        seen = []
+        good = self._account("good", None, fetch=lambda: seen.append("good") or {"ok": True})
+        off = self._account("off", None, fetch=lambda: seen.append("off") or {"ok": True})
+        off.enabled = False
+        parked = self._account("parked", None,
+                               fetch=lambda: seen.append("parked") or {"ok": True})
+        _, pool = self._pool_with([good, off, parked])
+        refresher = wb_accounts.CreditsRefresher(pool, warm_gap=0)
+        refresher._parked["parked"] = time.time() + 3600
+        self.assertEqual(refresher.warm_sweep(), 1)
+        self.assertEqual(seen, ["good"])
+
+    def test_warm_start_can_be_switched_off(self):
+        seen = []
+        account = self._account("x", None, fetch=lambda: seen.append("x") or {"ok": True})
+        _, pool = self._pool_with([account])
+        refresher = wb_accounts.CreditsRefresher(pool, warm_start=False, warm_gap=0)
+        self.assertEqual(refresher.warm_sweep(), 0)
+        self.assertEqual(seen, [])
+
+    def test_start_never_blocks_on_a_slow_upstream(self):
+        def slow():
+            time.sleep(0.4)
+            return {"ok": True}
+
+        accounts = [self._account(uid, None, fetch=slow)
+                    for uid in ("slow-a", "slow-b", "slow-c")]
+        _, pool = self._pool_with(accounts)
+        refresher = wb_accounts.CreditsRefresher(pool, warm_gap=0)
+        started = time.time()
+        refresher.start()
+        elapsed = time.time() - started
+        try:
+            self.assertLess(elapsed, 0.2,
+                            "start() 必须立刻返回，不能在启动路径上等上游")
+        finally:
+            refresher.stop()
+            refresher.join(timeout=5)
+
 
 class RefreshCadenceTests(unittest.TestCase):
     """刷新节奏要保守：上游计费调用有明确上界，且不会比 TTL 更勤。"""

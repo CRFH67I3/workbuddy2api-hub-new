@@ -1,6 +1,6 @@
 ## Unreleased
 
-- **免费模型不再被低余额保留线拦截**：免费名单原先只认目录 `credits: x0.00`，`hy4flash-free` / `hy4free` 这类上游按命名标为免费、但不在定价目录里的模型因此不在名单中；账号余额跌破 `reserve_credits` 后，连免费模型一起 park，网关对所有模型回 503。现在 `model_id_is_free()` 同时接受 `credits: x0.00` 与 `free` 后缀，`free_models_by_realm()` 的三个来源统一走该判定。付费模型的保留线保护不变。
+- **免费模型不再被低余额保留线拦截**：免费名单原先只认目录 `credits: x0.00`，`hy4flash-free` / `hy4free` 这类上游按命名标为免费、但不在定价目录里的模型因此不在名单中；账号余额跌破 `reserve_credits` 后，连免费模型一起 park，网关对所有模型回 503。现在明确非零价格优先（带 `free` 名字但标价 `x0.30` 仍按付费处理），只有价格缺失时才用经过确认的免费名单 `CONFIRMED_FREE_MODEL_IDS`（`hy4flash-free` / `hy4free`），不信任任意 `*free` 名称。`free_models_by_realm()` 的三个来源统一走该判定。付费模型的保留线保护不变。
 
 ## v2.2.1
 

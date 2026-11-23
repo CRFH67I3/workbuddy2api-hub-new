@@ -4227,16 +4227,21 @@ def credits_is_free(value):
 def model_id_is_free(mid, item=None):
     """True when this model costs nothing.
 
-    The catalogue's ``credits`` field is the primary signal. A ``free`` suffix
-    is the second: the upstream names its zero-cost tiers that way
-    (``hy4flash-free``, ``hy4free``), and those ids are not always present in
-    the priced catalogue table, so relying on ``credits`` alone left them out
-    of the free set. The low-credit reserve then refused them - a free model
-    blocked because a *paid* balance was low.
+    A known price always wins: ``credits: x0.30`` is paid even if the id ends
+    in ``free`` - the operator's low-credit guard must not be bypassed by a
+    misleading name. Only when the price is missing/unparsable does the
+    ``free`` suffix come in: upstream names its zero-cost tiers that way
+    (``hy4flash-free``, ``hy4free``) and those ids are not always present in
+    the priced catalogue, so relying on ``credits`` alone left them out of the
+    free set and a paid balance blocked a free request.
     """
-    if credits_is_free((item or {}).get("credits")):
+    credits = (item or {}).get("credits")
+    if credits_is_free(credits):
         return True
-    return str(mid or "").strip().lower().endswith("free")
+    if str(credits or "").strip():
+        # 明确写了价格但不是免费：付费判定优先于任何名称推断。
+        return False
+    return str(mid or "").strip().lower() in wb_accounts.CONFIRMED_FREE_MODEL_IDS
 
 
 def free_models_by_realm():
