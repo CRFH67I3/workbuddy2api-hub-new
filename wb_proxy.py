@@ -14660,6 +14660,16 @@ SANITIZE_CLAUDE_CODE_INTRO_RE = re.compile(
     r"(?: tool)? for Claude(?: Code)?\.?")
 SANITIZE_CLAUDE_CODE_INTRO_REPLACEMENT = "You are a helpful AI assistant."
 SANITIZE_CLAUDE_CODE_LOWER = "you are claude code,"
+# Trae（TraeCode）自述首句（2026-11-24 本机 CN 号池实测）：
+#   You are an interactive agent in TraeCode that helps the USER ...
+# 上游按「interactive agent in TraeCode」这一连续短语判非官方渠道，命中即
+# 400 / 11128。逐条二分：单独 `TraeCode`、`in Trae IDE`、`in Cursor` 均 200；
+# 只删掉 `in TraeCode` 后，真实 23KB system（21 个工具）整体 200。因此只删这
+# 一段短语，句子其余部分与 Trae 的行为指令原样保留。
+SANITIZE_TRAECODE_RE = re.compile(
+    r"(?i)You are an interactive agent in\s+TraeCode\b")
+SANITIZE_TRAECODE_REPLACEMENT = "You are an interactive agent"
+SANITIZE_TRAECODE_LOWER = "interactive agent in traecode"
 # 真实形态是一整行，尾部还有 `cch=` 这类不以前缀 `cc_` 开头的参数；按行删除，
 # 避免只删到第一个分号后把 `x-anthropic-billing-header:` 留在出站文本里。
 SANITIZE_HDR_LINE_RE = re.compile(
@@ -14793,6 +14803,10 @@ def has_fingerprint(text, identity=True, billing=True):
     # SANITIZE_FEATURES 只登记了首字母大写的 "You are Claude Code"；这里用
     # 小写字面量补齐大小写混排的 system 文本，命中后才走 sanitize_text 的正则。
     if SANITIZE_CLAUDE_CODE_LOWER in low:
+        return True
+    # TraeCode 自述句：廉价字面量探测，命中才走正则。
+    if (SANITIZE_TRAECODE_LOWER in low
+            and SANITIZE_TRAECODE_RE.search(text) is not None):
         return True
     # 品牌词缩减：`harness` 是廉价前置筛，真命中交给正则。
     if (SANITIZE_BRAND_LOWER in low
@@ -14940,6 +14954,8 @@ def sanitize_text(text, identity=True, billing=True):
             SANITIZE_CLAUDE_CODE_INTRO_REPLACEMENT, text)
         # Codex 自述首段先整句换掉：它本身就是 SANITIZE_FEATURES 里的指纹。
         text = SANITIZE_CODEX_INTRO_RE.sub(SANITIZE_CODEX_INTRO_REPLACEMENT, text)
+        # Trae（TraeCode）自述句：只删 "in TraeCode" 这段渠道指纹。
+        text = SANITIZE_TRAECODE_RE.sub(SANITIZE_TRAECODE_REPLACEMENT, text)
         text = SANITIZE_IDENTITY_RE.sub(SANITIZE_IDENTITY_REPLACEMENT, text)
         # GUI 描述段单独一条规则：锚定整句，只调整句尾语序。
         text = SANITIZE_DSH_GUI_RE.sub(SANITIZE_DSH_GUI_REPLACEMENT, text)
