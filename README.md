@@ -20,7 +20,7 @@
 This project is for protocol research and personal use only. Prefer the official client, do not use your primary account, and do not resell or share access.
 
 <p align="center">
-  <a href="https://github.com/niyouqianma/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v2.2.2-2496ED?style=flat-square" alt="Version 2.2.2"></a>
+  <a href="https://github.com/niyouqianma/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v2.2.3-2496ED?style=flat-square" alt="Version 2.2.3"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat-square" alt="Python">
   <img src="https://img.shields.io/badge/API-OpenAI_Compatible-412991?style=flat-square" alt="OpenAI API">
   <img src="https://img.shields.io/badge/Dual_Realm-Intl_&_CN-0DBD8B?style=flat-square" alt="Dual Realm">
@@ -267,12 +267,7 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 
 ## 七、版本更新记录 (Changelog)
 
-### Unreleased
-
-- **出口感知的统一模型别名（数据层）**：新增 `unified_models` / `unified_models_enabled`（默认关）与 `resolve_unified_model(name, realm)`，允许把一个对外模型名按出口解析成不同真实 id（如 CN 的 `deepseek-v4.1-flash` 与 CodeArts 的 `deepseek-v4.1-flash-1017`），避免同名模型的关闭状态跨出口串扰。本 PR 只落地数据层与单测，不接入请求/清单路径。
-- **统一模型接线**：`_dispatch_chat_post` 在 realm 确定后、key/banned 检查前按出口解析统一名（保留原名供 key 双拼写放行）；`/v1/models` 按当前出口宣告统一名（复用 `advertise_unified_models`），仅在目标真实存在于该出口时宣告。新增 13 项集成测试覆盖出口隔离。
-
-完整更新记录请查阅 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
+本版更新请查看 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 
 ---
 
