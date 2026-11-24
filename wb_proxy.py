@@ -15336,9 +15336,13 @@ def repack_tool_result_blocks(messages):
             role = mm.get("role")
             if role == "tool":
                 tid = mm.get("tool_call_id")
-                if not (isinstance(tid, str) and tid in want):
-                    break
-                results.append(mm)
+                if isinstance(tid, str) and tid in want:
+                    results.append(mm)
+                else:
+                    # Keep scanning past an orphan result: it will be removed
+                    # by cleanup_orphan_tool_calls, and it must not hide a
+                    # valid result that follows it.
+                    between.append(mm)
                 i += 1
                 continue
             # Any assistant message ends this batch. A message that is not a
@@ -15412,12 +15416,17 @@ def cleanup_orphan_tool_calls(messages):
         else:
             m.pop("tool_calls", None)
     out = []
+    seen_results = set()
     for m in messages:
         if isinstance(m, dict) and m.get("role") == "tool":
             tid = m.get("tool_call_id")
             if not (isinstance(tid, str) and tid in keep):
                 changed = True
                 continue
+            if tid in seen_results:
+                changed = True
+                continue
+            seen_results.add(tid)
         out.append(m)
     if not changed:
         return messages, False
@@ -20820,6 +20829,21 @@ def _responses_input_to_messages(payload):
                 target.get("reasoning_content"), pending_reasoning)
             pending_reasoning = ""
 
+    def append_tool_result(call_id, content):
+        nonlocal assistant_target
+        messages.append({
+            "role": "tool",
+            "tool_call_id": call_id or "",
+            "content": content,
+        })
+        # A tool result belongs to the declaration that preceded it. Keep the
+        # assistant target so a later function_call in the same Responses
+        # batch is appended to that same assistant message instead of starting
+        # a second one. The Chat repair pass can recover most shapes, but the
+        # replay boundary marker prevents a second declaration from being
+        # merged when the client deliberately starts a new turn.
+        pending_reasoning = ""
+
     if isinstance(inp, str):
         messages.append({"role": "user", "content": inp})
     elif isinstance(inp, list):
@@ -20974,12 +20998,7 @@ def _responses_input_to_messages(payload):
                     content = raw_out
                 else:
                     content = str(raw_out)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": item.get("call_id") or "",
-                    "content": content,
-                })
-                pending_reasoning = ""
+                append_tool_result(item.get("call_id") or "", content)
             elif itype == "function_call":
                 tc_item = {
                     "id": item.get("call_id") or item.get("id") or "",
@@ -21017,12 +21036,7 @@ def _responses_input_to_messages(payload):
                     content = raw_out
                 else:
                     content = str(raw_out)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": item.get("call_id") or "",
-                    "content": content,
-                })
-                pending_reasoning = ""
+                append_tool_result(item.get("call_id") or "", content)
             elif itype == "agent_message":
                 parts = item.get("content")
                 if isinstance(parts, list):
