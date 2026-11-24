@@ -88,5 +88,27 @@ check("off switch: name unchanged",
       S.resolve_unified_model("ds-flash", "codearts", d2) == "ds-flash")
 
 print()
+print("[6] protocol entry points resolve the client-facing name")
+old_accounts = P.ACCOUNTS_DIR
+P.ACCOUNTS_DIR = d
+try:
+    body = {"model": "DS-FLASH", "input": "hi"}
+    P.resolve_unified_model_in_payload(body, "cn")
+    check("responses-style body is resolved", body["model"] ==
+          "deepseek-v4.1-flash", body)
+    anthropic = {"model": "ds-flash", "messages": [{"role": "user", "content": "hi"}]}
+    P.resolve_unified_model_in_payload(anthropic, "codearts")
+    check("anthropic-style body is resolved", anthropic["model"] ==
+          "deepseek-v4.1-flash-1017", anthropic)
+    unknown = {"model": "other", "input": "hi"}
+    P.resolve_unified_model_in_payload(unknown, "cn")
+    check("unknown names pass through", unknown["model"] == "other", unknown)
+    missing = {"input": "hi"}
+    P.resolve_unified_model_in_payload(missing, "cn")
+    check("a body without a model is untouched", missing == {"input": "hi"}, missing)
+finally:
+    P.ACCOUNTS_DIR = old_accounts
+
+print()
 print("RESULT: %d passed, %d failed" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

@@ -13912,6 +13912,26 @@ def advertise_unified_models(data, unified, realm):
     return data + extra
 
 
+def resolve_unified_model_in_payload(payload, realm):
+    """Resolve one client-facing unified name for the request's exit.
+
+    All protocol entry points call this before translation: chat,
+    /v1/responses, and Anthropic Messages otherwise carry the client-facing
+    name straight to an upstream that only knows the real id. The original
+    name stays on the handler for key restrictions and reply echoing.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    if "model" not in payload:
+        return payload
+    try:
+        payload["model"] = wb_settings.resolve_unified_model(
+            payload.get("model"), realm, ACCOUNTS_DIR)
+    except Exception:
+        pass
+    return payload
+
+
 def model_entry(mid, meta, realm=None):
     """Build a rich /v1/models entry from the desktop app catalog metadata.
     The OpenAI spec only names id/object/created/owned_by, so capability data is
@@ -29110,6 +29130,9 @@ class Handler(BaseHTTPRequestHandler):
                 "store response state. Send the full conversation in 'input' "
                 "instead, or use a stateless client.",
                 "invalid_request_error")
+        explicit_realm = self._request_realm()
+        req_realm = explicit_realm or CURRENT_REALM
+        resolve_unified_model_in_payload(payload, req_realm)
         session_key = extract_session_key(self.headers, payload)
         # 工具可能在顶层，也可能整份在 input 的 additional_tools 条目里。回程
         # 的两处取值（custom_names 判定条目类型、request_meta 回显工具清单）
@@ -29144,8 +29167,6 @@ class Handler(BaseHTTPRequestHandler):
                sorted(custom_names) or "-", compaction, key_label(self._key_id()) or "-")
         )
         try:
-            explicit_realm = self._request_realm()
-            req_realm = explicit_realm or CURRENT_REALM
             blocked = self._cross_realm_error(chat_req.get("model"), req_realm)
             if blocked:
                 return self._error(400, blocked, "invalid_request_error")
@@ -29496,6 +29517,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_messages(self, payload):
         """Serve an Anthropic Messages request through the chat pipeline."""
+        explicit_realm = self._request_realm()
+        req_realm = explicit_realm or CURRENT_REALM
+        resolve_unified_model_in_payload(payload, req_realm)
         web_meta = None
         try:
             import wb_webgateway
@@ -29532,8 +29556,6 @@ class Handler(BaseHTTPRequestHandler):
                chat_req.get("reasoning_effort"), len(chat_req.get("tools") or []),
                key_label(self._key_id()) or "-"))
         try:
-            explicit_realm = self._request_realm()
-            req_realm = explicit_realm or CURRENT_REALM
             blocked = self._cross_realm_error(chat_req.get("model"), req_realm)
             if blocked:
                 return self._anthropic_error(400, blocked, "invalid_request_error")
@@ -30001,18 +30023,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_audio_post(path, payload)
         if is_media_route:
             return self._handle_media_post(path, payload)
-        try:
-            aliases = wb_settings.effective_model_aliases(ACCOUNTS_DIR)
-        except Exception:
-            aliases = {}
-        # The key's model restriction is expressed in the names the client
-        # sends, and an operator alias is exactly such a name. Remember it
-        # before the rewrite so `_key_model_error` can accept either spelling
-        # (see its docstring).
+        # Operator aliases and unified names are client-facing. Remember the
+        # original before either rewrite so key restrictions and reply echoing
+        # can accept the name the client actually sent.
         try:
             self._client_model = str(payload.get("model") or "")
         except Exception:
             self._client_model = ""
+        try:
+            aliases = wb_settings.effective_model_aliases(ACCOUNTS_DIR)
+        except Exception:
+            aliases = {}
         _apply_model_aliases(payload, aliases)
         _apply_background_model_alias(payload)
         # 日 token 限量（单位 M，0/缺省 = 不限）。放在并发槽位之前判断：
@@ -30115,11 +30136,7 @@ class Handler(BaseHTTPRequestHandler):
         # this exit's real id *after* the realm is known but before any
         # key/banned/disabled check, so a model closed on another exit cannot
         # leak here. _client_model still holds the original for key checks.
-        try:
-            payload["model"] = wb_settings.resolve_unified_model(
-                payload.get("model"), req_realm, ACCOUNTS_DIR)
-        except Exception:
-            pass
+        resolve_unified_model_in_payload(payload, req_realm)
         if req_realm == "codearts":
             blocked = self._banned_model_error(payload.get("model")) or self._key_model_error(payload.get("model"))
             if blocked:
