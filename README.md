@@ -284,6 +284,7 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 
 ### Unreleased
 
+- **修复零积分账号测试误报凭证失效**：HTTP 429 的 requestId 偶尔包含 `401` 时，不再把额度耗尽误判为凭证失效；面板继续显示 429 限流并按冷却时间恢复。 / **Fix zero-credit account tests misreporting expired credentials**: a `401` substring inside an HTTP 429 requestId no longer marks the credential as expired; the panel keeps the 429 rate-limit state and its cooldown.
 - 新增独立「接口」模块，支持管理外部 API Key、查看调用记录（默认每页 20 条）和按接口查看动态请求示例。
 - 新增外部账号 API：生成浏览器授权链接、查询授权状态并读取国内版 / 国际版脱敏账号列表；API Key 统一管理，权限由接口 scope 控制。
 - 统一新工作台、兼容布局和移动端菜单顺序，接口入口紧跟在账号入口之后。

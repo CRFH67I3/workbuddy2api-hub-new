@@ -4172,11 +4172,19 @@ def _auth_failure_text(text):
     `http_error_message()` keeps that header in the diagnosis string.
     """
     lower = str(text or "").lower()
+    # Error bodies often contain opaque request IDs.  A hex request ID can
+    # legitimately contain the digits ``401``; only treat that code as an
+    # authentication failure when the message's HTTP status is actually 401.
+    status = re.search(r"\bhttp(?:error)?\s+(\d{3})\b", lower)
+    if status and status.group(1) != "401":
+        return False
     if "invalid_token" in lower or "invalid-token" in lower:
         return True
     if "<html" in lower:
         return False
-    return ("401" in lower or "unauthorized" in lower or "authorization" in lower
+    explicit_401 = re.search(r"(?:^|[\s:(])401(?:$|[\s:),.])", lower)
+    return (status is not None or explicit_401 is not None
+            or "unauthorized" in lower or "authorization" in lower
             or "token expired" in lower)
 
 
