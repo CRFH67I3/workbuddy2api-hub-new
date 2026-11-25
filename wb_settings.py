@@ -1192,15 +1192,10 @@ def set_keep_backups(accounts_dir, value):
     return keep
 
 
-#: 后台排程时段（CST 24 小时制）。checkin / travel 默认为空：国内版签到与猫猫旅行
-#: 不再按整点跑，改为每天 08:00–10:00 之间随机抽一个时刻（见 cn_rewards_random_time）。
-#: keepalive / cat 仍是整点。
-#:
-#: 想回到固定整点：在 settings.json 里显式写 schedule.checkin / schedule.travel，
-#: 写了就按老逻辑走整点排程，随机时段整体让位（见 wb_scheduler._reload_schedule）。
+#: Default hourly schedule, in the scheduler's existing local time.
 DEFAULT_SCHEDULE_HOURS = {
-    "checkin": [],
-    "travel": [],
+    "checkin": [9, 21],
+    "travel": [9, 21],
     "keepalive": [22],
     "cat": [1],
 }
@@ -1268,12 +1263,9 @@ def set_schedule_hours(accounts_dir, value):
                 if hours is None:
                     raise ValueError("schedule.%s must contain hours 0-23" % key)
                 merged[key] = hours
-            else:
-                hours = _normalize_hours(current.get(key))
-                merged[key] = hours if hours is not None else list(DEFAULT_SCHEDULE_HOURS[key])
         data["schedule"] = merged
         save(accounts_dir, data)
-    return merged
+        return dict(merged, **schedule_hours(accounts_dir))
 
 
 #: 网页活跃（国际版每日活跃）的独立时段，HH:MM。空表示跟随 checkin 整点，
@@ -2902,26 +2894,64 @@ def _draw_cn_rewards_time():
     return "%02d:%02d" % (minute // 60, minute % 60)
 
 
-def cn_rewards_random_time(accounts_dir, now=None):
-    """今日国内版签到 / 猫猫旅行的随机执行时刻（"HH:MM"），每天抽一次并落盘。
+def cn_rewards_random_enabled(accounts_dir):
+    return load(accounts_dir).get("cn_rewards_random_enabled") is True
 
-    和 daily_chat_random_times() 同一个理由：调度器每 30 秒重读设置、进程也可能在
-    当天中途重启，每次重抽会让时刻一直漂移，「今天跑过没有」也就永远说不准。落盘的
-    date 就是「当天只抽一次」的闸门。
-    """
-    today = wb_time.day_key(time.time() if now is None else now)
-    data = load(accounts_dir)
-    stored = data.get(CN_REWARDS_RANDOM_KEY)
-    if isinstance(stored, dict) and stored.get("date") == today:
-        value = str(stored.get("time") or "")
-        if _normalize_times([value]):
-            return value
-    value = _draw_cn_rewards_time()
+
+def set_cn_rewards_random_enabled(accounts_dir, enabled):
+    if not isinstance(enabled, bool):
+        raise ValueError("cn_rewards_random_enabled must be true or false")
     with _lock:
         data = load(accounts_dir)
-        data[CN_REWARDS_RANDOM_KEY] = {"date": today, "time": value}
+        data["cn_rewards_random_enabled"] = enabled
         save(accounts_dir, data)
-    return value
+    return enabled
+
+
+def cn_rewards_day_start(now):
+    """Beijing midnight as epoch seconds, independent of the statistics timezone."""
+    offset = wb_time.BEIJING_OFFSET
+    return ((int(now) + offset) // 86400) * 86400 - offset
+
+
+def cn_rewards_date(now):
+    return time.strftime("%Y-%m-%d", time.gmtime(now + wb_time.BEIJING_OFFSET))
+
+
+def cn_rewards_schedule(accounts_dir, now):
+    """Return the tasks with no hourly override and today's persisted slot."""
+    with _lock:
+        data = load(accounts_dir)
+        if data.get("cn_rewards_random_enabled") is not True:
+            return (), {}
+        schedule = data.get("schedule")
+        if not isinstance(schedule, dict):
+            schedule = {}
+        tasks = tuple(key for key in ("checkin", "travel")
+                      if _normalize_hours(schedule.get(key)) is None)
+        if not tasks:
+            return (), {}
+        today = cn_rewards_date(now)
+        state = data.get(CN_REWARDS_RANDOM_KEY)
+        if (not isinstance(state, dict) or state.get("date") != today
+                or not isinstance(state.get("time"), str)
+                or not _normalize_times([state["time"]])):
+            state = {"date": today, "time": _draw_cn_rewards_time()}
+            data[CN_REWARDS_RANDOM_KEY] = state
+            save(accounts_dir, data)
+        return tasks, state
+
+
+def complete_cn_rewards(accounts_dir, date, tasks, pending):
+    with _lock:
+        data = load(accounts_dir)
+        state = data.get(CN_REWARDS_RANDOM_KEY)
+        if not isinstance(state, dict) or state.get("date") != date:
+            return
+        done = set(state.get("done") or ()) | set(tasks)
+        data[CN_REWARDS_RANDOM_KEY] = dict(state, done=sorted(done),
+                                           pending=sorted(pending))
+        save(accounts_dir, data)
 
 
 def _clean_models(value):

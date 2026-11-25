@@ -15,6 +15,7 @@ import random
 import wb_tasks
 import wb_quota_scan
 import wb_settings
+import wb_time
 from wb_tasks import do_cat_travel
 
 #: 网页活跃时段到期后还能补多久（分钟）。两个时段相隔 12 小时，所以 12 小时既覆盖
@@ -110,17 +111,11 @@ class Scheduler:
         self.pool = pool
         # 默认排程对齐 Sliverkiss/workbuddy2api (CST 24小时制)；实际值从
         # settings.json 的 schedule 段读取，缺省 / 非法回落这些默认值。
-        # 国内版签到与猫猫旅行默认不占整点：改由 cn_rewards_slot（每天 08:00–10:00
-        # 随机一个时刻）触发。显式配了 schedule.checkin / schedule.travel 时才是整点
-        # 排程，那时 cn_rewards_slot 为空、随机时段整体让位。
-        self.checkin_hours = []
-        self.travel_hours = []
-        # 今日国内版签到 / 猫猫旅行的随机时刻（"HH:MM"），进程启动后由
-        # _reload_schedule 从 settings 读回，重启也不会漂移。
-        self.cn_rewards_slot = ""
-        # 当天是否已经消费过这个随机时段；重启后清空，账号侧的 can_checkin()
-        # 与旅行状态仍会挡住重复动作。
-        self._cn_rewards_done = {}
+        self.checkin_hours = [9, 21]
+        self.travel_hours = [9, 21]
+        self.codearts_checkin_hours = self.checkin_hours
+        self.cn_rewards_tasks = ()
+        self.cn_rewards_state = {}
         self.keepalive_hours = [22]      # 每日 22:00 集中 Token 保活检查
         self.cat_hours = [1]             # 每日 01:00 夜猫子专属任务
         # 网页活跃（国际版每日活跃）的独立时段，HH:MM；空 = 当天随机抽两个。
@@ -233,16 +228,6 @@ class Scheduler:
                     except Exception as exc:
                         self.log(f"网页活跃排程执行异常: {exc}")
                     time.sleep(35)
-                # 国内版签到 / 猫猫旅行的随机时段（默认 08:00–10:00）也是分钟级，
-                # 同样先于整点检查：这条路径命中时整点网格里没有它。
-                due_cn = self._due_cn_rewards_slot(now)
-                if due_cn:
-                    reason = f"国内版任务随机时段命中 ({due_cn})"
-                    try:
-                        self._execute_cycle(reason, cn_rewards_only=True)
-                    except Exception as exc:
-                        self.log(f"国内版任务随机时段执行异常: {exc}")
-                    time.sleep(35)
                 # 到达设定的整点前 1 分钟内触发
                 if cur_min == 0 and cur_hour in self.all_hours:
                     reason = f"整点排程命中 ({cur_hour}:00)"
@@ -251,6 +236,10 @@ class Scheduler:
                     except Exception as exc:
                         self.log(f"排程执行异常: {exc}")
                     time.sleep(65) # 避开当前这一分钟重复触发
+                try:
+                    self._execute_cn_rewards(time.time())
+                except Exception as exc:
+                    self.log(f"国内版任务随机时段执行异常: {exc}")
             # 模型额度窗口探针：不受 enabled 影响。窗口是按首次请求起算的，
             # 到点没人请求就不会开始新一轮，这件事跟签到/保活开关无关。
             self._run_window_probes()
@@ -362,6 +351,7 @@ class Scheduler:
             return False
         try:
             hours = wb_settings.schedule_hours(directory)
+            random_tasks, random_state = wb_settings.cn_rewards_schedule(directory, time.time())
         except Exception:
             return False
         try:
@@ -376,25 +366,25 @@ class Scheduler:
                 wb_settings.daily_chat_times(directory))
         except Exception:
             pass
-        changed = (hours["checkin"] != self.checkin_hours
-                   or hours["travel"] != self.travel_hours
+        checkin = [] if "checkin" in random_tasks else hours["checkin"]
+        travel = [] if "travel" in random_tasks else hours["travel"]
+        changed = (checkin != self.checkin_hours or travel != self.travel_hours
+                   or hours["checkin"] != self.codearts_checkin_hours
                    or hours["keepalive"] != self.keepalive_hours
                    or hours["cat"] != self.cat_hours
-                   or times != self.daily_chat_times)
-        self.checkin_hours = hours["checkin"]
-        self.travel_hours = hours["travel"]
+                   or times != self.daily_chat_times
+                   or random_tasks != self.cn_rewards_tasks
+                   or random_state != self.cn_rewards_state)
+        self.checkin_hours = checkin
+        self.travel_hours = travel
+        self.codearts_checkin_hours = hours["checkin"]
         self.keepalive_hours = hours["keepalive"]
         self.cat_hours = hours["cat"]
         self.daily_chat_times = times
-        self.all_hours = sorted(set(self.checkin_hours + self.travel_hours
+        self.cn_rewards_tasks = random_tasks
+        self.cn_rewards_state = random_state
+        self.all_hours = sorted(set(checkin + travel + self.codearts_checkin_hours
                                     + self.keepalive_hours + self.cat_hours))
-        # 整点排程为空 = 走「每天 08:00–10:00 随机一个时刻」；显式配了整点就尊重
-        # 配置，不再抽随机时刻（两套机制不叠加，否则一天会跑两遍）。
-        try:
-            self.cn_rewards_slot = ("" if (self.checkin_hours or self.travel_hours)
-                                    else wb_settings.cn_rewards_random_time(directory))
-        except Exception:
-            self.cn_rewards_slot = self.cn_rewards_slot or ""
         if changed:
             self._calc_next_fire()
         return changed
@@ -410,60 +400,52 @@ class Scheduler:
         if next_h is not None:
             # 今天
             t_struct = time.struct_time((now.tm_year, now.tm_mon, now.tm_mday, next_h, 0, 0, 0, 0, -1))
-        elif self.all_hours:
-            # 明天第一个小时
-            t_tomorrow = time.time() + 86400
-            now_tom = time.localtime(t_tomorrow)
-            first_h = self.all_hours[0]
-            t_struct = time.struct_time((now_tom.tm_year, now_tom.tm_mon, now_tom.tm_mday, first_h, 0, 0, 0, 0, -1))
         else:
-            # 整点网格是空的（全是随机时段 / 被手工清空）：没有整点候选可选。
-            t_struct = time.localtime(self._cn_rewards_slot_epoch(now) or time.time())
-        # 随机时段（国内版签到 / 猫猫旅行）也是「下一次执行」的候选，且比整点更早。
-        slot = self._cn_rewards_slot_epoch(now)
-        if slot and slot > time.time():
-            try:
-                hourly = time.mktime(t_struct)
-            except (OverflowError, ValueError):
-                hourly = None
-            if hourly is None or slot < hourly:
-                t_struct = time.localtime(slot)
-        self.next_run_time = time.strftime("%Y-%m-%d %H:%M:%S", t_struct)
+            t_struct = time.struct_time((now.tm_year, now.tm_mon, now.tm_mday + 1,
+                                         self.all_hours[0], 0, 0, 0, 0, -1))
+        current = time.time()
+        candidates = self._cn_rewards_slots(current)
+        if candidates:
+            slot = min(candidates.values())
+            if slot < time.mktime(t_struct):
+                beijing = time.gmtime(slot + wb_time.BEIJING_OFFSET)
+                self.next_run_time = time.strftime("%Y-%m-%d %H:%M:%S", beijing) + " (UTC+8)"
+                return
+        self.next_run_time = time.strftime("%Y-%m-%d %H:%M:%S",
+                                           time.localtime(time.mktime(t_struct)))
 
-    def _cn_rewards_slot_epoch(self, now=None):
-        """今日国内版随机时段的 epoch 秒；没有随机时段（显式整点配置）时返回 0。"""
-        offset = _slot_offset_minutes(self.cn_rewards_slot)
-        if offset is None:
-            return 0.0
-        now = time.localtime() if now is None else now
-        day_start = time.mktime((now.tm_year, now.tm_mon, now.tm_mday,
-                                 0, 0, 0, 0, 0, -1))
-        return day_start + offset * 60
+    def _cn_rewards_slots(self, now):
+        """Unfinished slots for the current Beijing day, including catch-up."""
+        state = self.cn_rewards_state
+        target = _slot_offset_minutes(state.get("time"))
+        if target is None or state.get("date") != wb_settings.cn_rewards_date(now):
+            return {}
+        start = wb_settings.cn_rewards_day_start(now)
+        slots = {task: start + target * 60 for task in self.cn_rewards_tasks}
+        if "travel" in slots and state.get("pending"):
+            slots["claim"] = start + 21 * 3600
+        done = state.get("done") or ()
+        return {task: slot for task, slot in slots.items()
+                if task not in done
+                and now - slot <= CN_REWARDS_GRACE_MINUTES * 60}
 
-    def _due_cn_rewards_slot(self, now=None):
-        """今天国内版签到 / 猫猫旅行的随机时段是否到点；到点返回 "HH:MM"。
-
-        与 _due_daily_chat_slot 同一套判定：过了点、当天还没消费过、且没超出补跑
-        窗口就算命中。巡检循环 30 秒醒一次，一轮巡检又可能占住几分钟，精确到分的
-        等号匹配会让这个时段当天直接漏掉。
-        """
-        if not self.cn_rewards_slot:
-            return ""
-        target = _slot_offset_minutes(self.cn_rewards_slot)
-        if target is None:
-            return ""
-        now = time.localtime() if now is None else now
-        day = time.strftime("%Y-%m-%d", now)
-        if self._cn_rewards_done.get(day):
-            return ""
-        current = now.tm_hour * 60 + now.tm_min
-        if current < target or current - target > CN_REWARDS_GRACE_MINUTES:
-            return ""
-        for other in list(self._cn_rewards_done):
-            if other != day:
-                self._cn_rewards_done.pop(other, None)
-        self._cn_rewards_done[day] = True
-        return self.cn_rewards_slot
+    def _execute_cn_rewards(self, now):
+        due = tuple(task for task, slot in self._cn_rewards_slots(now).items()
+                    if slot <= now)
+        if not due or not self._run_lock.acquire(blocking=False):
+            return False
+        try:
+            state = self.cn_rewards_state
+            pending = set(state.get("pending") or ())
+            if not self._run_cycle("国内版福利排程", cn_rewards=due, pending=pending):
+                return False
+            directory = self.pool.dir
+            wb_settings.complete_cn_rewards(directory, state["date"], due, pending)
+            self.cn_rewards_state = dict(state, done=sorted(set(state.get("done") or ()) | set(due)),
+                                         pending=sorted(pending))
+            return True
+        finally:
+            self._run_lock.release()
 
     def trigger_now(self):
         """手动立即触发一次调度检查。"""
@@ -474,17 +456,17 @@ class Scheduler:
         return {"ok": True, "msg": "已触发后台调度执行"}
 
     def _execute_cycle(self, trigger_reason="周期巡检", force=False,
-                       daily_chat_only=False, cn_rewards_only=False):
+                       daily_chat_only=False):
         if not self._run_lock.acquire(blocking=False):
             self.log(f"跳过本次巡检 ({trigger_reason})：上一轮仍在执行")
             return
         try:
-            self._run_cycle(trigger_reason, force, daily_chat_only, cn_rewards_only)
+            self._run_cycle(trigger_reason, force, daily_chat_only)
         finally:
             self._run_lock.release()
 
     def _run_cycle(self, trigger_reason="周期巡检", force=False,
-                   daily_chat_only=False, cn_rewards_only=False):
+                   daily_chat_only=False, *, cn_rewards=(), pending=None):
         self.last_run_time = time.strftime("%Y-%m-%d %H:%M:%S")
         self.log(f"开始执行任务 ({trigger_reason})...")
 
@@ -495,23 +477,28 @@ class Scheduler:
         daily_chat_count = 0
         daily_chat_targets = []
         cycle_hour = time.localtime().tm_hour
-        # cn_rewards_only：国内版随机时段命中时的那一轮，只做签到 / 活跃上报 /
-        # 猫猫旅行，不碰保活、夜猫子与网页活跃（它们各有自己的时段）。
-        run_checkin = (not daily_chat_only
-                       and (cn_rewards_only or force or cycle_hour in self.checkin_hours))
-        run_travel = (not daily_chat_only
-                      and (cn_rewards_only or force or cycle_hour in self.travel_hours))
-        run_keepalive = (not daily_chat_only and not cn_rewards_only
-                         and (force or cycle_hour in self.keepalive_hours))
-        run_cat = (not daily_chat_only and not cn_rewards_only
-                   and (force or cycle_hour in self.cat_hours))
+        regular = not daily_chat_only and not cn_rewards
+        run_checkin = ("checkin" in cn_rewards
+                       or (regular and (force or cycle_hour in self.checkin_hours)))
+        run_travel = ("travel" in cn_rewards
+                      or (regular and (force or cycle_hour in self.travel_hours)))
+        run_claim = "claim" in cn_rewards
+        codearts_checkin = regular and (force or cycle_hour in self.codearts_checkin_hours)
+        run_keepalive = regular and (force or cycle_hour in self.keepalive_hours)
+        run_cat = regular and (force or cycle_hour in self.cat_hours)
         if not self.pool:
             self.log("账号池不可用，跳过本次巡检")
             return
         accounts = list(self.pool.accounts)
+        if cn_rewards:
+            accounts = [acc for acc in accounts if acc.realm == "cn"]
+            if run_claim:
+                accounts = [acc for acc in accounts if acc.uid in pending]
+                if not accounts:
+                    return True
 
         if not accounts and not (
-                self._codearts_checkin_pending(run_checkin)
+                self._codearts_checkin_pending(codearts_checkin)
                 or self._codearts_keepalive_pending(run_keepalive)):
             self.log("暂无可用的活跃账号，跳过本次巡检")
             return
@@ -520,16 +507,16 @@ class Scheduler:
         # 总开关（settings.daily_activity，缺省开）：显式关掉时排程不再跑国际版
         # 每日活跃——时段命中、「立即巡检保活」(force) 与启动补跑都跳过；启动补跑
         # 留到开关重新打开后再消费。面板上的单账号 / 批量手动打卡是显式操作，不受影响。
-        activity_on = self._daily_activity_on()
+        activity_on = not cn_rewards and self._daily_activity_on()
         catchup = self._consume_startup_catchup() if activity_on else False
-        run_daily_chat = activity_on and not cn_rewards_only and (
+        run_daily_chat = activity_on and (
             force or daily_chat_only or catchup
-            or (not self.daily_chat_times and run_checkin))
-        if not activity_on:
+            or (not self.daily_chat_times and codearts_checkin))
+        if not activity_on and not cn_rewards:
             if not self._daily_activity_notice:
                 self._daily_activity_notice = True
                 self.log("国际版每日活跃已在设置中关闭（daily_activity=false），本轮跳过")
-        else:
+        elif activity_on:
             self._daily_activity_notice = False
 
         for idx, acc in enumerate(accounts):
@@ -596,9 +583,22 @@ class Scheduler:
                             self.log(f"! 账号 [{uid8}] 对话活跃上报失败: {res.get('error') or res.get('msg')}")
                         time.sleep(1.0)
 
+                if run_claim:
+                    result = do_cat_travel(acc, claim_only=True)
+                    action = result.get("action")
+                    if action in ("claim", "idle", "skip"):
+                        pending.discard(acc.uid)
+                    if action == "claim":
+                        travel_count += 1
+                        self.log(f"账号 [{uid8}] {result.get('msg')}")
+                    elif not result.get("ok"):
+                        self.log(f"账号 [{uid8}] 猫猫旅行领奖未成功: {result.get('msg')}")
+
                 if run_travel:
                     # 检查猫猫旅行与 Buddy 盲盒
                     tr = do_cat_travel(acc)
+                    if "travel" in cn_rewards and tr.get("action") in ("depart", "traveling"):
+                        pending.add(acc.uid)
                     if tr.get("action") == "claim":
                         travel_count += 1
                         self.log(f"🐱 账号 [{uid8}] 猫猫日常处理: {tr.get('msg')}")
@@ -608,6 +608,8 @@ class Scheduler:
                             self.log(f"🎁 账号 [{uid8}] {bo.get('msg')}")
                             time.sleep(1.0)
                         tr2 = do_cat_travel(acc)
+                        if "travel" in cn_rewards and tr2.get("action") in ("depart", "traveling"):
+                            pending.add(acc.uid)
                         if tr2.get("action") == "depart":
                             self.log(f"🐱 账号 [{uid8}] 猫猫日常处理: {tr2.get('msg')}")
                     elif tr.get("action") == "depart":
@@ -643,9 +645,10 @@ class Scheduler:
         if daily_chat_targets:
             daily_chat_count = self._run_daily_chat_batch(daily_chat_targets)
 
-        codearts_checkin_count = self._run_codearts_checkin(run_checkin)
+        codearts_checkin_count = self._run_codearts_checkin(codearts_checkin)
         codearts_keepalive_count = self._run_codearts_keepalive(run_keepalive)
         self.log(f"巡检完成：Token保活 {refreshed_count} 个，国内签到 {checkin_count} 个，CodeArts 签到 {codearts_checkin_count} 个，CodeArts 保活 {codearts_keepalive_count} 个，活跃上报 {report_count} 个，猫猫日常 {travel_count} 个，国际活跃 {daily_chat_count} 个")
+        return True
 
     def _codearts_keepalive_pending(self, run_keepalive):
         """Whether any enabled CodeArts account needs a token refresh now."""
@@ -985,20 +988,14 @@ class Scheduler:
         travel = _hhmm(self.travel_hours)
         keepalive = _hhmm(self.keepalive_hours)
         cat = _hhmm(self.cat_hours)
-        # 国内版签到 / 猫猫旅行默认走随机时段：面板上要能看见今天抽到几点，否则
-        # 「今天跑没跑」只能靠翻日志。
-        if self.cn_rewards_slot:
-            rewards = ("国内版签到+猫猫旅行 %s（%02d:00–%02d:00 内每天重抽）"
-                       % (self.cn_rewards_slot,
-                          wb_settings.CN_REWARDS_WINDOW[0],
-                          wb_settings.CN_REWARDS_WINDOW[1]))
-            schedule_kind = "每日随机时段"
-        else:
-            rewards = "签到 %s · 猫猫旅行 %s" % (checkin, travel)
-            schedule_kind = "整点排程"
-        mode_cn = ("%s (%s · 每日活跃上报 · "
+        slot = self.cn_rewards_state.get("time", "")
+        checkin_time = f"{slot} (UTC+8)" if "checkin" in self.cn_rewards_tasks else checkin
+        travel_time = (f"{slot} (UTC+8) / 21:00 (UTC+8) 补领"
+                       if "travel" in self.cn_rewards_tasks else travel)
+        mode = "每日随机时段" if self.cn_rewards_tasks else "整点排程"
+        mode_cn = ("%s (签到 %s · 猫猫旅行 %s · 每日活跃上报 · "
                    "Token保活 %s · 夜猫 %s) + 模型额度窗口探针"
-                   % (schedule_kind, rewards, keepalive, cat))
+                   % (mode, checkin_time, travel_time, keepalive, cat))
         mode_intl = ("账号 Token 自动保活与凭证常驻 (每日 %s 集中巡检) "
                      "+ 模型额度窗口探针" % keepalive)
         return {
@@ -1009,7 +1006,7 @@ class Scheduler:
             "last_run_time": self.last_run_time or "尚未运行",
             "next_run_time": self.next_run_time or "待调度",
             # 今天的国内版随机时段；整点排程模式下为空串。
-            "cn_rewards_slot": self.cn_rewards_slot,
+            "cn_rewards_slot": slot,
             "windows": windows,
             "quota_scans": scans,
             # 国际版每日活跃的排程与现场：面板「任务与福利」页的状态块读这几项。
