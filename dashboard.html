@@ -3784,6 +3784,10 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     '该模型暂无定价数据': 'No pricing data for this model yet',
     '该模型被上游临时限流（429），仅此模型受限，到点自动恢复': 'This model is temporarily rate-limited upstream (429); only this model is restricted and it recovers automatically',
     '该模型配额耗尽（code 6004），同账号其他模型不受影响': "This model's quota is exhausted (code 6004); the account's other models are unaffected",
+    '额度耗尽': 'Credits exhausted',
+    '余额保护': 'Balance protection',
+    '上游返回积分耗尽（429 / code 14018），余额保护到 ': 'The upstream reported exhausted credits (429 / code 14018); balance protection lasts until ',
+    '上游返回积分耗尽（HTTP 429 / code 14018），账号级付费请求会继续失败': 'The upstream reported exhausted credits (HTTP 429 / code 14018); paid requests for this account will keep failing',
     '当前窗口的起点未知（没有撞线记录，或记录已过期），已用按最近 24 小时统计，是剩余量的下界': 'The start of the current window is unknown (no cap on record, or a stale one); used counts the last 24h, a lower bound of what is left',
     // 模型冷却 pill 的动态文本按片段匹配（整串含模型名与时间戳，命不中整串键），
     // 所以片段键必须带前后空格，避免误命中其它文案。
@@ -12389,6 +12393,7 @@ function accountRow(a){
               : a.reserveBlocked ? '<span class="badge warn">保留积分</span>'
               : a.dailyLimitBlocked ? '<span class="badge warn" title="今日已用 ' + fmt(a.dailyTokensToday || 0) + ' / ' + fmt(a.dailyTokenLimit || 0) + ' token，暂停接单（本地 0 点恢复）">日限额</span>'
               : a.creditLimitReached ? '<span class="badge warn" title="今日已消费 ' + Number(a.dailyCreditsToday || 0).toFixed(2) + ' / ' + (a.dailyCreditLimit || 0) + ' 积分，仅免费模型可用（本地 0 点恢复）">积分限额</span>'
+              : a.balanceProtected ? '<span class="badge warn" title="上游返回积分耗尽（429 / code 14018），余额保护到 ' + esc(fmtCoolAt(a.balanceUntil)) + '，请刷新积分后再试">额度耗尽</span>'
               // 熔断/降权也是"不接单"，但跟上游配额无关：上游连续失败把账号
               // 关进本地保护窗口。少了这两支，账号会被画成绿色「可用」，而池子
               // 其实是空的——生产上就是这么误导排查的。
@@ -12836,7 +12841,12 @@ function disabledRows(){
       rows.push({who, realm, scope: '账号', kind: '本地停用', manual: true,
                  reason: '面板手动停用，该账号不参与轮询', until: ''});
     }
-    if(a.inCooldown && !a.accountBanned){
+    if(a.balanceProtected && !a.accountBanned){
+      rows.push({who, realm, scope: '账号', kind: '余额保护', detail,
+                 reason: '上游返回积分耗尽（HTTP 429 / code 14018），账号级付费请求会继续失败',
+                 until: a.balanceUntil ? fmtCoolAt(a.balanceUntil) : ''});
+    }
+    if(a.inCooldown && !a.accountBanned && !a.balanceProtected){
       const secs = Number(a.cooldownFor || 0);
       const streak = Number(a.softStreak || 0);
       rows.push({who, realm, scope: '账号', kind: '上游限流', detail,
