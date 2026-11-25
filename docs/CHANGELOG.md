@@ -1,3 +1,75 @@
+## Unreleased
+
+- **面板「默认出口」改为下拉直选**：卡片上原来的「⇄ 切换默认出口为【X】」轮转按钮，换成下拉列表——选中哪个出口就切到哪个并立即保存到 `/realm`。三个出口（国际版 / 国内版 / CodeArts）时一次点选即可，不再出现「国际版 → CodeArts 要点两次」这种只能靠次数凑出来的操作。同值或不存在的取值不提交，只把下拉回显拨回当前出口；选项仍按 `/realm` 返回的 options 生成（CodeArts 未配置时只有两项），仅在选项集变化时重建，避免每轮 `updateUI` 重建面板与 i18n 整树。
+- **Next UI 主题下的弹出位置修正**：出口卡片在新主题里被全局 `.realm-card:hover` 的 `transform: translateY(-1px)` 变成子元素的包含块，`position: fixed` 的自绘下拉会按卡片而不是视口算坐标，展开后错位并在光标离开时瞬移消失。为 Next UI 显式声明 `.realm-card.gateway-ctrl:hover { transform: none !important; }`。
+
+- **国内版福利随机排程（PR #32）**：默认关闭，保留原 09:00 / 21:00 排程。开启后，未配置自定义时段的国内版签到和猫猫旅行在北京时间 08:00–10:00 抽取时段，21:00 仅补领待领取旅行奖励。支持锁占用补跑、重启恢复和逐任务覆盖。
+
+## v2.2.3
+
+- **Responses 工具历史修复（Issue #26）**：并行工具批次中夹入孤立结果或开发者提示时，网关继续扫描并重排同批次结果；同一 `call_id` 的重复结果只保留第一条，避免上游 `400 / code 11148` 退役会话。
+- **TraeCode 指纹消毒（PR #30）**：仅将 system / developer / assistant 中的 `You are an interactive agent in TraeCode` 改写为 `You are an interactive agent`，规避上游非官方渠道拦截，用户与工具内容不变。
+- **出口感知统一模型名（PR #28 / #29）**：新增默认关闭的 `unified_models` 数据层；开启后 `/v1/models` 仅在目标模型属于当前出口时宣告统一名，并在 chat、Responses、Anthropic Messages 三类入口按出口解析真实模型 ID。Key 白名单同时接受客户端原名。
+
+## v2.2.2
+
+- **CodeArts 余额汇总接口**：新增 `GET /v1/balance-summary`，支持 `Authorization: Bearer` 与 `?key=`，仅合计该 Key 允许使用的启用账号缓存积分（快照缺失返回 `null`，不主动打上游刷新）。
+- **国内版出站身份与面板默认值**：国内版桌面与内置 CLI 默认版本同步至 `WorkBuddy 5.11.3 / CLI 2.176.0`，设置页分别显示国内与国际内置 CLI 默认值；已有用户覆盖保持不变。
+- **计费头宽松清洗增强**：开启 `WB_SANITIZE_LOOSE_BILLING=1` 时，首行超过 400 字符但以 `x-anthropic-billing-(?:header|hdr):` 开头时，只剥离行首计费头与紧随的 `cc_*/cch=` 键值对，保留同行子代理提示词正文；默认严格模式维持不变。
+- **控制台交互与密码框修复**：登录与修改密码确认框在隐藏时保持 `disabled` 且离开设置页自动关闭并清空；导航与页面将「自动化」更名为「自动化任务」、签到与活跃记录迁入「自动化任务」、号池工具默认折叠、账号/模型表格表头吸顶、模型清单支持保存勾选与 Pro Only 账号自适应默认勾选、每日任务拍平展示，并修复 `MODELS_DATA` 隔离读取。
+- **语音接口**：TTS 缺少结束帧时按截断处理。ASR 支持 `response_format=json/text`，其他格式返回 400。
+- **Responses 回放**：合并同轮说明、可见思考和工具调用，尊重最终回复及压缩边界。跳过托管工具回执和不可解的压缩密文，并限制转发摘要的大小。
+- **上游错误**：流内 `11102` 按请求错误处理，非流式接口返回 400，流式接口发送对应协议的终止错误。
+- **工具 Schema 与错误分类**：保留正则约束并转换 Go 校验器不识别的 Unicode 转义。`11103`、`11152` 按请求错误处理，网页抓取的 `15021`、`15022` 分别报告目标站策略拒绝和连接失败。
+- **网页工具统计**：搜索、抓取和组合接口记入请求台账，带请求 ID、Key 标识、状态和耗时，积分记为 0。
+- **便携更新**：下载完整后才原子替换更新包，下载中断自动清理临时文件。
+- **启动预热刷新全部账号**（PR #21）：余额刷新器首次 tick 改为 `warm_sweep()`，逐个（默认间隔 2 秒）异步刷新全部可用账号并跳过禁用/冷却账号，停止等待可中断；`WB_CREDITS_WARM_START=0` 关闭预热并保留原首轮单账号刷新行为。
+- **免费模型低余额保留线豁免**（PR #20）：在保留账号层 `free_models` fail-closed 边界的前提下，`free_models_by_realm()` 按 `CONFIRMED_FREE_MODEL_IDS`（`hy4flash-free` / `hy4free`）→ 内置快照 → 桌面缓存 → 活目录优先级叠加并支持更高层显式非零价格覆盖移除免费豁免，账号层大小写无关匹配 `self.free_models`。
+- **归档日志缓存修复**：修复 Windows NTFS 同刻时间片下 `wb_usage_io.rotate()` 新增段后未失效归档目录缓存导致的冷重建段遗漏。
+- 全量测试：**313 个套件：235 个 Python + 78 个 JS**。
+
+## v2.2.1
+
+- **修复 Docker 镜像缺少 `wb_webgateway/`**：Dockerfile 只复制了 `wb_*.py`，网页工具网关在容器里会因 `No module named 'wb_webgateway'` 静默降级，`/health` 仍返回 200。镜像现在显式复制整个子包，并新增 Dockerfile 回归断言。
+- **修复便携包与 OpenWrt 包缺少 `wb_webgateway/`**：`release/portable.txt` 原先只登记 `wb_*.py`，`.ipk/.apk` 构建也只收集 `wb_*.py`。便携包清单、OpenWrt 安装规则和两种打包脚本现在都包含完整的 `wb_webgateway` 子包，并新增覆盖嵌套模块的发布资产测试。
+- **便携包自动更新改用新仓库**：`wb_update_portable.REPO_DEFAULT` 仍指向已停用的旧仓库，面板下载更新包会 404；现已切换到 `niyouqianma/workbuddy2api-hub`，并新增默认仓库断言。
+- 全量测试：**312 个套件：234 个 Python + 78 个 JS**。GitHub CI 通过 Ubuntu 3.9 / 3.12、Windows 3.12 完整矩阵后发布。
+
+## v2.2.0
+
+- **OpenAI 兼容语音接口**：新增 `POST /v1/audio/speech` 与 `POST /v1/audio/transcriptions`。TTS 支持 WAV / PCM（上游不提供 MP3，请求 MP3 会明确返回 400），ASR 支持 multipart `file` / `audio` 字段与 3 MB 上限；`15052` 返回 413，`15053` 返回 400。
+- **音频能力开关**：媒体页新增「语音合成 TTS」「语音转写 ASR」，两者默认关闭；开启后使用文本号池账号，遵守 API Key 白名单、指定账号和号池边界。
+- **音频记账**：TTS / ASR 成功与失败行分别记录 `kind=tts/asr`、`cost_policy=audio`，运行日志也按对应 tag 归类。
+- **流内错误按失败终态处理**：Chat 流在已输出正文后收到上游 error 时，只发送错误帧，不再补正常 finish / usage / `[DONE]`；Responses 发送 `response.failed`；Anthropic Messages 发送原生 error 事件并记录失败。
+- **设备 token 请求头安全处理**：含 Unicode、换行或非法字符的设备 token 会被忽略，避免 `UnicodeEncodeError` 或请求头注入导致整个账号不可用。
+- **运营任务补全**：补齐星巴克协作、记者节福利、真实技能分享渠道、模板四事件组；技能分享必须拿到 `channel_id`、`share_code` 与链接，进度确认后才领奖。任务页将「本期 Buddy 加油站活动」改名为「Buddy 加油站签到」。
+- **文档精简**：README 的版本更新段只保留 `docs/CHANGELOG.md` 入口。
+- 全量测试：**312 个套件：234 个 Python + 78 个 JS，`312 passed, 0 failed, 0 skipped`**。
+
+## v2.1.7
+
+- 用量页先独立显示今日统计，累计与历史在后台补齐。最近请求支持按版本查询，空闲时返回简短状态，实时列表保留未变化的行，翻到历史页时维持当前位置。
+- 封存段会生成可重用的压缩汇总。即使全局断点缺失，也能合并有效的归档摘要，单段摘要损坏或依赖变更时只重算受影响的段。
+
+- **大用量看板**：后台批量读新增记录，复用现有断点，同时更新看板聚合和时间序列。面板展示计算进度和更新时间，按版本拉取变化的数据；性能分位约每 30 秒刷新。自定义历史区间可以手动刷新，日期边界按原始流水精确核算。
+- **用量日志轮转**：活动日志默认达到 8 MiB 后封存到 `usage.jsonl.segments/`，普通归档后台压缩并建立时间索引，旧流水保留。备份时复制整个用量目录。可设置 `WB_USAGE_ROTATE_BYTES=0` 停止新轮转。降级到只支持单文件的旧版前，可用 `python -m wb_usage_io export` 导出完整流水。
+
+## v2.1.5
+
+- **更新源迁移**：`wb_updates.py` 的默认仓库从 `ardeyouxipianyi/workbuddy2api-hub` 切换到 `niyouqianma/workbuddy2api-hub`。面板每日更新检查、手动检查与安装链接不再访问已停用的旧仓库；自建 fork 仍可通过 `WB_UPDATE_REPO=owner/repo` 覆盖。
+- **面板入口迁移**：顶部 GitHub 图标与侧栏「WorkBuddy 仓库」链接同步切换到新仓库。
+- **回归测试**：新增默认仓库断言，更新检查与设置页 UI 测试改用新仓库 URL。
+
+## v2.1.4
+
+- **网页工具网关**：新增 `/v1/tools/search`、`/v1/tools/fetch`、`/v1/tools/search_fetch` 与伪模型 `wb-search` / `wb-fetch` / `wb-search-fetch`。搜索和抓取后端支持 WorkBuddy 官方 `/agenttool` 与本地多引擎链；Anthropic Messages、OpenAI Responses 和 Gemini `googleSearch` 已接入同一套 provider，默认关闭，不消耗上游模型额度。
+- **网页工具安全修正**：Responses 与 Anthropic 多轮网页工具继承 API Key 的账号白名单；WorkBuddy `/agenttool` 禁止跟随重定向，避免账号鉴权头被发送到其他主机。
+- **Responses 工具结果顺序修复**：重放历史中 `function_call_output` 早于 `function_call` 时，出站前移动到对应调用之后，避免上游返回 400 / code 11148；带文本的相邻 `tool_calls` 批次也可安全合并。
+- **重启后积分刷新**：积分刷新器首轮只等待 20 秒，随后恢复配置间隔，避免重启后长时间显示旧快照。
+- **外部账号接口与管理页**：新增独立外部 API Key、`account:auth` / `account:read` scope、浏览器授权链接、脱敏账号列表、调用记录分页与动态请求示例；密钥文件权限为 `0600`。
+- **仓库迁移**：Release、Docker、一键部署与 Star 趋势链接切换到新仓库 `niyouqianma/workbuddy2api-hub`，历史贡献与上游项目署名保留。
+- 全量测试：**310 个套件：232 个 Python + 78 个 JS，`310 passed, 0 failed, 0 skipped`**。
+
 ## v2.1.3
 
 - **CodeArts 并发占满改为有界排队**（#886 / #887）：单账号并发槽被占满时最多等待 `busy_wait_seconds`（默认 10 秒，范围 0–120），名额释放通过 `Condition` 立即唤醒；超时返回可重试的 429 `rate_limit_error` 并带 `reset_at`，不再误报 502「没有可用的账号」。真正空池 / 全停用 / 全冷却仍提示添加账号；多账号仍优先选空闲账号。

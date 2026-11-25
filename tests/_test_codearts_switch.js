@@ -31,8 +31,10 @@ assert.ok(html.includes('id="workbuddyAccountsSection"'), 'WorkBuddy 账号区�
 assert.ok(html.includes('id="workbuddyDisabledSection"'), 'WorkBuddy 禁用区缺少可定位 id');
 assert.ok(html.includes('id="workbuddyActivitySection"'), 'WorkBuddy 活动区缺少可定位 id');
 
-assert.ok(/const nextGw = gwOptions\[\(gwIdx \+ 1\) % gwOptions\.length\]/.test(script),
-  '默认出口应按服务端 options 循环（未配置时跳过 codearts）');
+assert.ok(!/\(gwIdx \+ 1\) % gwOptions\.length/.test(script),
+  '默认出口不再轮转，改为下拉直选');
+assert.ok(/function syncRealmPicker\(/.test(script),
+  '默认出口卡应有 syncRealmPicker 渲染下拉选项');
 assert.ok(/window\.REALM_OPTIONS/.test(script),
   '默认出口循环应读取服务端返回的 options');
 assert.ok(/if\(r === "codearts"\)\{/.test(script),
@@ -85,8 +87,8 @@ assert.equal(byId('workbuddyAccountsSection').style.display, 'none',
   'CodeArts 视图应隐藏 WorkBuddy 账号区');
 assert.equal(byId('workbuddyDisabledSection').style.display, 'none',
   'CodeArts 视图应隐藏 WorkBuddy 禁用区');
-assert.equal(byId('workbuddyActivitySection').style.display, 'none',
-  'CodeArts 视图应隐藏 WorkBuddy 活动区');
+assert.equal(byId('workbuddyActivitySection').style.display, '',
+  '签到与活跃记录在自动化页且含 CodeArts 记录，CodeArts 视图下不应隐藏');
 assert.equal(byId('tabCodeartsHealthy').textContent, 1,
   'CodeArts 卡片应显示健康账号数');
 assert.equal(byId('tabCodeartsModels').textContent, 1,
@@ -99,9 +101,16 @@ assert.equal(byId('codeartsAccountsSection').style.display, 'none',
 assert.equal(byId('workbuddyAccountsSection').style.display, '',
   'WorkBuddy 视图应显示 WorkBuddy 账号区');
 
+assert.ok(byId('realmPicker').innerHTML.includes('value="codearts"'),
+  '已配置时下拉应含 CodeArts 出口');
+
 window.REALM_OPTIONS = ['intl', 'cn'];
 window.VIEW_REALM = 'intl';
 api.updateUI();
+assert.ok(!byId('realmPicker').innerHTML.includes('value="codearts"'),
+  '未配置时下拉不应含 CodeArts 出口');
+assert.ok(byId('realmPicker').innerHTML.includes('value="cn"'),
+  '下拉应始终含国内版出口');
 assert.equal(byId('tabCodearts').style.display, 'none',
   '未配置时 CodeArts 卡片应隐藏');
 assert.equal(byId('accountsRealmCodearts').style.display, 'none',
