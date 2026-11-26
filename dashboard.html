@@ -18611,13 +18611,14 @@ async function saveAnthropicMessages(btn){
 
 window.UNIFIED_MODELS = {};
 function _umRowHtml(name, cn, intl, ca){
-  const val = (x)=>String(x||'').replace(/"/g,'&quot;');
-  const inp = (cls,v,w)=>'<input class="'+cls+'" value="'+val(v)+'" style="width:100%;box-sizing:border-box">';
+  const inp = (cls,v,ph)=>'<input class="'+cls+'" value="'+escapeHtml(v)+'"'
+    +(ph?' placeholder="'+escapeHtml(ph)+'"':'')
+    +' style="width:100%;box-sizing:border-box">';
   return '<tr class="unified-row">'
-    + '<td style="padding:4px 8px;text-align:left">'+inp('um-name',name)+'</td>'
-    + '<td style="padding:4px 8px;text-align:left">'+inp('um-cn',cn)+'</td>'
-    + '<td style="padding:4px 8px;text-align:left">'+inp('um-intl',intl)+'</td>'
-    + '<td style="padding:4px 8px;text-align:left">'+inp('um-codearts',ca)+'</td>'
+    + '<td style="padding:4px 8px;text-align:left">'+inp('um-name',name,'deepseek-v4.1-flash')+'</td>'
+    + '<td style="padding:4px 8px;text-align:left">'+inp('um-cn',cn,'deepseek-v4.1-flash')+'</td>'
+    + '<td style="padding:4px 8px;text-align:left">'+inp('um-intl',intl,'可选')+'</td>'
+    + '<td style="padding:4px 8px;text-align:left">'+inp('um-codearts',ca,'deepseek-v4.1-flash-1017')+'</td>'
     + '<td style="padding:4px 8px;text-align:center"><button onclick="this.closest(\'tr\').remove()" style="padding:4px 8px">删除</button></td>'
     + '</tr>';
 }
@@ -18634,7 +18635,7 @@ function renderUnifiedModels(table){
   box.innerHTML='';
   const t=(table&&typeof table==='object')?table:{};
   const keys=Object.keys(t);
-  if(!keys.length){ addUnifiedModelRow('deepseek-v4.1-flash','deepseek-v4.1-flash','','deepseek-v4.1-flash-1017'); return; }
+  if(!keys.length){ addUnifiedModelRow('','','',''); return; }
   keys.forEach(function(k){ const m=t[k]||{}; addUnifiedModelRow(k,m.cn||'',m.intl||'',m.codearts||''); });
 }
 async function saveUnifiedModels(btn){
