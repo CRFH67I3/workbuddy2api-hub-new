@@ -59,10 +59,17 @@ class NoteErrorTests(unittest.TestCase):
         account.note_error(
             'HTTP 429: {"error":{"data":{"code":14018,'
             '"msg":"credits exhausted",'
-            '"requestId":"01a2122494e1706497d6bfc32795759"}}}')
+            '"requestId":"01a21224014e1706497d6bfc32795759"}}}')
         self.assertFalse(account.token_expired)
         account.cooldown_until = 0
         self.assertTrue(account.ready())
+
+    def test_non_401_explicit_auth_markers_still_count(self):
+        for text in ('HTTP 403: {"error":"invalid_token"}',
+                     'HTTP 400: {"msg":"token expired"}',
+                     'HTTP 403: Unauthorized'):
+            with self.subTest(text=text):
+                self.assertTrue(wb_accounts._auth_failure_text(text))
 
 
 class NoteSuccessTests(unittest.TestCase):
