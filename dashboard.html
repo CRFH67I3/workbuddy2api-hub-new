@@ -2858,6 +2858,7 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     '正常': 'Healthy',
     '冷却中': 'Cooling down',
     '已停用': 'Disabled',
+    '需重新登录': 'Re-login required',
     '已签到': 'Checked in',
     '清冷却': 'Clear cooldown',
     '签到': 'Check in',
@@ -4071,6 +4072,7 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     '猫猫正在旅行途中，请稍后再来查看！': 'The cat is still travelling; check again later!'
   };
   var HANT_PHRASES = {
+    "需重新登录": "需重新登入",
     "即将过期": "即將過期",
     "暂无请求记录": "暫無請求記錄",
     "语音合成 TTS": "語音合成 TTS",
@@ -9583,6 +9585,7 @@ function renderCodeartsAccounts(r){
       : '';
     let status = '<span class="badge ok mini">正常</span>';
     if(a.disabled) status = '<span class="badge bad mini">已停用</span>';
+    else if(a.needs_relogin) status = '<span class="badge bad mini">需重新登录</span>';
     else if(a.cooling) status = '<span class="badge warn mini">冷却中</span>';
     const token = escapeHtml((a.token_remaining || "—") + (a.expires_at ? " · " + a.expires_at : ""));
     const credits = (a.credits && a.credits.remain != null)
