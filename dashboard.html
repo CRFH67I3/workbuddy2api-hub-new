@@ -3074,6 +3074,7 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     '累计消耗': 'Total spent',
     '已消耗积分': 'Credits spent',
     '已用': 'Used',
+    '即将过期': 'Expiring soon',
     '已用完/过期': 'Exhausted / expired',
     '已用额度最多': 'Most quota used',
     '已禁用': 'Disabled',
@@ -4066,6 +4067,7 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     '猫猫正在旅行途中，请稍后再来查看！': 'The cat is still travelling; check again later!'
   };
   var HANT_PHRASES = {
+    "即将过期": "即將過期",
     "暂无请求记录": "暫無請求記錄",
     "语音合成 TTS": "語音合成 TTS",
     "语音转写 ASR": "語音轉寫 ASR",
@@ -9477,9 +9479,11 @@ function renderCodeartsCards(r){
   const credits = (st.credits != null) ? st.credits : null;
   const creditsTotal = (st.credits_total != null) ? st.credits_total : null;
   const creditsUsed = (st.credits_used != null) ? st.credits_used : null;
+  const creditsExpiring = (st.credits_expiring != null) ? st.credits_expiring : null;
   const creditSub = (creditsTotal != null)
     ? ("剩余 / 总 " + fmtCredits(creditsTotal)
-       + (creditsUsed != null ? " · 已用 " + fmtCredits(creditsUsed) : ""))
+       + (creditsUsed != null ? " · 已用 " + fmtCredits(creditsUsed) : "")
+       + (creditsExpiring ? " · 即将过期 " + fmtCredits(creditsExpiring) : ""))
     : "CodeArts 积分";
   box.innerHTML =
     card("健康账号", healthy + "/" + total, "由本进程直接管理")
@@ -9543,7 +9547,11 @@ function renderCodeartsAccounts(r){
     const token = escapeHtml((a.token_remaining || "—") + (a.expires_at ? " · " + a.expires_at : ""));
     const credits = (a.credits && a.credits.remain != null)
       ? (fmtCredits(a.credits.remain)
-         + (a.credits.used ? '<div style="font-size:11px;color:var(--dim)">已用 ' + fmtCredits(a.credits.used) + '</div>' : ''))
+         + ((a.credits.used || a.credits.expiring)
+            ? '<div style="font-size:11px;color:var(--dim)">已用 ' + fmtCredits(a.credits.used || 0)
+              + (a.credits.expiring ? ' / 即将过期 ' + fmtCredits(a.credits.expiring) : '')
+              + '</div>'
+            : ''))
       : "—";
     const conc = (a.active_concurrent != null ? a.active_concurrent : 0)
       + "/" + (a.max_concurrent != null ? a.max_concurrent : "—");
