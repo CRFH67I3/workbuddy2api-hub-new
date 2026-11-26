@@ -12807,6 +12807,8 @@ def runtime_settings_view():
         "asr_enabled": wb_settings.audio_enabled(ACCOUNTS_DIR, "asr"),
         "model_aliases": wb_settings.model_aliases(ACCOUNTS_DIR),
         "model_aliases_enabled": wb_settings.model_aliases_enabled(ACCOUNTS_DIR),
+        "unified_models": wb_settings.unified_models(ACCOUNTS_DIR),
+        "unified_models_enabled": wb_settings.unified_models_enabled(ACCOUNTS_DIR),
         "filter_models_by_key": wb_settings.filter_models_by_key(ACCOUNTS_DIR),
         "reasoning_effort_map": wb_settings.reasoning_effort_map(ACCOUNTS_DIR),
         "models_only_available": wb_settings.models_only_available(ACCOUNTS_DIR),
@@ -26652,6 +26654,20 @@ class Handler(BaseHTTPRequestHandler):
                                    "invalid_request_error")
             wb_settings.set_model_aliases_enabled(ACCOUNTS_DIR, raw)
             reply["model_aliases_enabled"] = raw
+        if "unified_models" in payload:
+            try:
+                cleaned = wb_settings.set_unified_models(
+                    ACCOUNTS_DIR, payload.get("unified_models"))
+            except ValueError as exc:
+                return self._error(400, str(exc), "invalid_request_error")
+            reply["unified_models"] = cleaned
+        if "unified_models_enabled" in payload:
+            raw = payload.get("unified_models_enabled")
+            if not isinstance(raw, bool):
+                return self._error(400, "unified_models_enabled must be true or false",
+                                   "invalid_request_error")
+            wb_settings.set_unified_models_enabled(ACCOUNTS_DIR, raw)
+            reply["unified_models_enabled"] = raw
         if "filter_models_by_key" in payload:
             raw = payload.get("filter_models_by_key")
             if not isinstance(raw, bool):

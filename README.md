@@ -267,6 +267,10 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 
 ## 七、版本更新记录 (Changelog)
 
+### Unreleased
+
+- **统一模型设置面板**：新增「设置 → 模型与定价 → 统一模型（出口感知）」区块，提供开关与出口映射表（对外名 / wb_cn / wb_intl / CodeArts），可直接编辑并保存 `unified_models` / `unified_models_enabled`。服务端 `/settings` 与 `/settings/save` 同步支持这两个键。默认关，老安装行为不变。
+
 本版更新请查看 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 
 ---
