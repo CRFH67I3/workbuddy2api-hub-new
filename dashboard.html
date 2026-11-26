@@ -30659,7 +30659,11 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
     actions.appendChild(jump);
     guide.appendChild(actions);
     var head = page.querySelector('.api-page-head');
-    page.insertBefore(guide, head ? head.nextSibling : page.firstChild);
+    if(head && head.parentNode){
+      head.parentNode.insertBefore(guide, head.nextSibling);
+    }else{
+      page.insertBefore(guide, page.firstChild);
+    }
   }
   function docPanels(detail){
     return all(':scope > section', detail).filter(function(sec){
@@ -31120,7 +31124,12 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
         groups.map(function(group){ return { key: group.key, label: group.title }; }),
         mediaActive || groups[0].key,
         function(key){ setMediaTab(page, key); });
-      page.insertBefore(nav, groups[0].section);
+      var mediaAnchor = groups[0].section;
+      if(mediaAnchor && mediaAnchor.parentNode){
+        mediaAnchor.parentNode.insertBefore(nav, mediaAnchor);
+      }else{
+        page.insertBefore(nav, page.firstChild);
+      }
     }
     bindTabs(nav, function(key){ setMediaTab(page, key); });
     var saved = readStore(window.sessionStorage, MEDIA_TAB_KEY);
@@ -31274,7 +31283,12 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
       label.className = 'next-filter-label';
       label.textContent = '版本';
       filter.insertBefore(label, filter.firstChild);
-      page.insertBefore(filter, scheduler || daily || page.firstChild);
+      var taskAnchor = scheduler || daily;
+      if(taskAnchor && taskAnchor.parentNode){
+        taskAnchor.parentNode.insertBefore(filter, taskAnchor);
+      }else{
+        page.insertBefore(filter, page.firstChild);
+      }
     }
     bindTabs(filter, function(key){ setTaskRealm(key, page); });
     var saved = readStore(window.sessionStorage, TASK_REALM_KEY);
