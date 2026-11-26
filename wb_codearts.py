@@ -2138,20 +2138,23 @@ class CodeArtsStream(object):
         yield b"data: [DONE]\n\n"
 
 
-def _ensure_token(acct, force=False):
+def _ensure_token(acct, force=False, failed_token=None):
     """保证账号手上有一张当前可用的访问凭证。
 
     force=True 用于「上游刚回了 401/403」：凭证的 expiration 看起来还没到，
     但华为云已经判定它不可解密，只能无视剩余有效期、直接用 refresh_token
     换新。刷新本身仍受 _refresh_lock 串行化，避免一次性 refresh_token 被
-    并发消费。
+    并发消费；传入 failed_token 时，若并发请求已经换到新凭证则直接复用。
     """
     if not force and not acct.expiring_soon() and not acct.expired():
         return
     # refresh_token 是一次性的：同一账号并发刷新会让后一个请求拿到已消费的
     # token。串行化，并在拿到锁后重新判断（前一个请求可能已经刷好了）。
     with acct._refresh_lock:
-        if not force and not acct.expiring_soon() and not acct.expired():
+        if force:
+            if failed_token and acct.auth.get("cloud_dragon_token") != failed_token:
+                return
+        elif not acct.expiring_soon() and not acct.expired():
             return
         try:
             token = refresh_token_for(acct.auth, proxy=acct.proxy)
@@ -2401,7 +2404,23 @@ def open_chat(config, body, session_key=None, allowed_accounts=None):
                 ensure_models(acct, timeout=8.0)
             except CodeArtsError:
                 pass
-            stream, used = _client_chat(acct, body, session_key)
+            stale_token = acct.auth.get("cloud_dragon_token")
+            try:
+                stream, used = _client_chat(acct, body, session_key)
+            except CodeArtsAuthError as first_exc:
+                # 401/403 只说明「这张临时凭证此刻不可用」，不等于账号报废：
+                # 先无视有效期用一次性 refresh_token 换一张新凭证，成功就在同一
+                # 账号上就地重试一次。重试若命中非认证错误（如积分耗尽 / 429 /
+                # 400），直接交由外层对应分支处理，不再错记成认证失败。
+                if acct.needs_relogin:
+                    raise
+                try:
+                    _ensure_token(acct, force=True, failed_token=stale_token)
+                except CodeArtsAuthError:
+                    raise
+                except CodeArtsError:
+                    raise first_exc
+                stream, used = _client_chat(acct, body, session_key)
             pool.note_success(acct)
             pool.bind_session(session_key, acct.uid)
             return stream, acct, used
@@ -2409,31 +2428,8 @@ def open_chat(config, body, session_key=None, allowed_accounts=None):
             pool.release(acct)
             raise
         except CodeArtsAuthError as exc:
-            # 401/403 只说明「这张临时凭证此刻不可用」，不等于账号报废：
-            # 先无视有效期用一次性 refresh_token 换一张新凭证，成功就在同一
-            # 账号上就地重试一次。只有刷新也被上游拒绝时，账号才会进入
-            # needs_relogin（自动跳过 + 面板标红），永远不再被打成 disabled。
             if not acct.needs_relogin:
-                try:
-                    _ensure_token(acct, force=True)
-                except CodeArtsAuthError as refresh_exc:
-                    # 刷新被上游拒绝才是真正的原因（401 只是它的表现），
-                    # 让调用方和面板看到「需要重新登录」而不是一句 bad token。
-                    exc = refresh_exc
-                except CodeArtsError:
-                    pass
-                else:
-                    try:
-                        stream, used = _client_chat(acct, body, session_key)
-                    except CodeArtsAuthError as again:
-                        exc = again
-                    except CodeArtsError:
-                        pass
-                    else:
-                        pool.note_success(acct)
-                        pool.bind_session(session_key, acct.uid)
-                        return stream, acct, used
-            pool.note_auth_failure(acct, str(exc))
+                pool.note_auth_failure(acct, str(exc))
             pool.release(acct)
             exclude.add(acct.uid)
             last_error = exc

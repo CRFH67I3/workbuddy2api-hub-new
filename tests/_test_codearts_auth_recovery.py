@@ -202,6 +202,36 @@ try:
     health = C.health(C.load_config(ACCOUNTS), force=True)
     check("health 带 needs_relogin", health.get("needs_relogin") == 1, health)
     check("healthy 不把它算进去", health.get("healthy") == 0, health)
+
+    print("== 401 刷新成功但就地重试命中积分耗尽：按积分冷却，不错记认证失败 ==")
+    state.reset_requests()
+    state.token = "FRESH-TOKEN"
+    state.oauth_error = None
+    state.chat_error = None
+    state.embedded_error = {"error_code": "CREDIT_EXHAUSTED",
+                            "error_msg": "credit exhausted"}
+    pool, acct = seed_account(token="STALE-TOKEN")
+    retry_exc = None
+    try:
+        C.open_chat(cfg, chat_body("sess-credit"), "sess-credit")
+    except C.CodeArtsError as exc:
+        retry_exc = exc
+    state.embedded_error = None
+    check("抛出积分耗尽错误", isinstance(retry_exc, C.CodeArtsUpstreamError)
+          and retry_exc.code == "CREDIT_EXHAUSTED", retry_exc)
+    check("未累加 auth_err_count", acct.auth_err_count == 0, acct.auth_err_count)
+    check("冷却时长走 CREDIT_COOLDOWN",
+          acct.cool_until - time.time() > C.AUTH_COOLDOWN + 60,
+          acct.cool_until - time.time())
+
+    print("== 并发 401 已由前序请求刷新：传入 failed_token 时不重复消费 refresh_token ==")
+    state.reset_requests()
+    state.token = "FRESH-TOKEN"
+    pool, acct = seed_account(token="FRESH-TOKEN")
+    before_token_calls = state.token_calls
+    C._ensure_token(acct, force=True, failed_token="STALE-TOKEN")
+    check("跳过重复刷新", state.token_calls == before_token_calls,
+          (before_token_calls, state.token_calls))
 finally:
     stop_server(srv)
 
