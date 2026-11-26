@@ -20,7 +20,7 @@
 This project is for protocol research and personal use only. Prefer the official client, do not use your primary account, and do not resell or share access.
 
 <p align="center">
-  <a href="https://github.com/niyouqianma/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v2.2.3-2496ED?style=flat-square" alt="Version 2.2.3"></a>
+  <a href="https://github.com/niyouqianma/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v2.2.4-2496ED?style=flat-square" alt="Version 2.2.4"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat-square" alt="Python">
   <img src="https://img.shields.io/badge/API-OpenAI_Compatible-412991?style=flat-square" alt="OpenAI API">
   <img src="https://img.shields.io/badge/Dual_Realm-Intl_&_CN-0DBD8B?style=flat-square" alt="Dual Realm">
@@ -266,11 +266,6 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 ---
 
 ## 七、版本更新记录 (Changelog)
-
-### Unreleased
-
-- **统一模型设置面板**：新增「设置 → 模型与定价 → 统一模型（出口感知）」区块，提供开关与出口映射表（对外名 / wb_cn / wb_intl / CodeArts），可直接编辑并保存 `unified_models` / `unified_models_enabled`。服务端 `/settings` 与 `/settings/save` 同步支持这两个键。默认关，老安装行为不变。
-- **修复零积分账号测试误报凭证失效**：HTTP 429 的 requestId 偶尔包含 `401` 时，不再把额度耗尽误判为凭证失效；面板继续显示 429 限流并按冷却时间恢复。 / **Fix zero-credit account tests misreporting expired credentials**: a `401` substring inside an HTTP 429 requestId no longer marks the credential as expired; the panel keeps the 429 rate-limit state and its cooldown.
 
 本版更新请查看 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 
